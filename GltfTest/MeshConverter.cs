@@ -169,7 +169,6 @@ public class MeshConverter
 
             var dict = new Dictionary<int, List<ElementInfo>>();
 
-            var attrList = new List<string>();
             foreach (var vertexLayoutElement in renderChunkInfo.ChunkVertices.VertexLayout.Elements)
             {
                 if (vertexLayoutElement.Usage == GpuWrapApiVertexPackingePackingUsage.PS_Invalid)
@@ -201,10 +200,10 @@ public class MeshConverter
                         attribute = "TANGENT";
                         break;
                     case GpuWrapApiVertexPackingePackingUsage.PS_TexCoord:
-                        attribute = !attrList.Contains("TEXCOORD_0") ? "TEXCOORD_0" : "TEXCOORD_1";
+                        attribute = $"TEXCOORD_{vertexLayoutElement.UsageIndex}";
                         break;
                     case GpuWrapApiVertexPackingePackingUsage.PS_Color:
-                        attribute = !attrList.Contains("COLOR_0") ? "COLOR_0" : "COLOR_1";
+                        attribute = $"COLOR_{vertexLayoutElement.UsageIndex}";
                         break;
                     case GpuWrapApiVertexPackingePackingUsage.PS_VehicleDmgNormal:
                         attribute = "_VEHICLE_DAMAGE_NORMAL";
@@ -234,8 +233,7 @@ public class MeshConverter
                     default:
                         continue;
                 }
-
-                attrList.Add(attribute);
+                
                 lst.Add(new ElementInfo(attribute, vertexLayoutElement.Type, GetSize(vertexLayoutElement.Type)));
             }
 
