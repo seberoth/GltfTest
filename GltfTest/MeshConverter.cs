@@ -1,10 +1,13 @@
 ﻿using SharpGLTF.Schema2;
 using System;
 using System.Linq.Expressions;
+using System.Numerics;
+using SharpGLTF.Memory;
 using WolvenKit.RED4.Archive.CR2W;
 using WolvenKit.RED4.Archive.IO;
 using WolvenKit.RED4.Types;
 using static WolvenKit.RED4.Types.Enums;
+using Vector2 = System.Numerics.Vector2;
 
 namespace GltfTest;
 
@@ -30,6 +33,12 @@ public class MeshConverter
 
     private List<Material> ExtractMaterials(CMesh mesh)
     {
+        var image1 = _modelRoot.CreateImage("vehicles_stickers_d01");
+        image1.Content = new MemoryImage(@"C:\Users\Marcel\AppData\Roaming\REDModding\WolvenKit\Depot\base\vehicles\common\textures\vehicles_stickers_d01.png");
+
+        var image2 = _modelRoot.CreateImage("vehicles_stickers_n01");
+        image2.Content = new MemoryImage(@"C:\Users\Marcel\AppData\Roaming\REDModding\WolvenKit\Depot\base\vehicles\common\textures\vehicles_stickers_n01.png");
+
         var result = new List<Material>();
         var dict = new Dictionary<string, uint>();
         foreach (var materialName in mesh.Appearances[0].Chunk!.ChunkMaterials)
@@ -44,8 +53,27 @@ public class MeshConverter
                 materialNameStr += $".{dict[materialNameStr]++:D3}";
             }
 
-            result.Add(_modelRoot.CreateMaterial(materialNameStr));
+            var material = _modelRoot.CreateMaterial(materialNameStr);
+
+            if (materialNameStr == "stickers")
+            {
+                material.InitializePBRSpecularGlossiness();
+                var diffuse = material.FindChannel("Diffuse");
+                if (diffuse.HasValue)
+                {
+                    diffuse.Value.SetTexture(0, image1);
+                }
+
+                var normal = material.FindChannel("Normal");
+                if (normal.HasValue)
+                {
+                    normal.Value.SetTexture(0, image2);
+                }
+            }
+
+            result.Add(material);
         }
+
         return result;
     }
 
@@ -253,7 +281,7 @@ public class MeshConverter
                                 break;
                             case GpuWrapApiVertexPackingePackingType.PT_Float16_2:
                                 var x2 = (float)BitConverter.ToHalf(bufferReader.ReadBytes(2));
-                                var y2 = (float)BitConverter.ToHalf(bufferReader.ReadBytes(2));
+                                var y2 = 1F - (float)BitConverter.ToHalf(bufferReader.ReadBytes(2));
 
                                 elementInfo.Writer.Write(x2);
                                 elementInfo.Writer.Write(y2);
