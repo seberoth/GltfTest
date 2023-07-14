@@ -1,13 +1,11 @@
 ﻿using SharpGLTF.Schema2;
-using System;
-using System.Linq.Expressions;
-using System.Numerics;
 using SharpGLTF.Memory;
+using SharpGLTF.Validation;
 using WolvenKit.RED4.Archive.CR2W;
-using WolvenKit.RED4.Archive.IO;
 using WolvenKit.RED4.Types;
 using static WolvenKit.RED4.Types.Enums;
-using Vector2 = System.Numerics.Vector2;
+using Vector4 = WolvenKit.RED4.Types.Vector4;
+using System.Numerics;
 
 namespace GltfTest;
 
@@ -22,23 +20,16 @@ public class MeshConverter
             return;
         }
 
-        File.WriteAllBytes(@"C:\Dev\blob.bin", rendBlob.RenderBuffer.Buffer.GetBytes());
-
         var materials = ExtractMaterials(cMesh);
+        ExtractSkeleton(cMesh);
         ExtractMeshes(rendBlob, materials);
 
         _modelRoot.MergeBuffers();
-        _modelRoot.SaveGLB(filePath);
+        _modelRoot.SaveGLB(filePath, new WriteSettings { Validation = ValidationMode.Skip });
     }
 
     private List<Material> ExtractMaterials(CMesh mesh)
     {
-        var image1 = _modelRoot.CreateImage("vehicles_stickers_d01");
-        image1.Content = new MemoryImage(@"C:\Users\Marcel\AppData\Roaming\REDModding\WolvenKit\Depot\base\vehicles\common\textures\vehicles_stickers_d01.png");
-
-        var image2 = _modelRoot.CreateImage("vehicles_stickers_n01");
-        image2.Content = new MemoryImage(@"C:\Users\Marcel\AppData\Roaming\REDModding\WolvenKit\Depot\base\vehicles\common\textures\vehicles_stickers_n01.png");
-
         var result = new List<Material>();
         var dict = new Dictionary<string, uint>();
         foreach (var materialName in mesh.Appearances[0].Chunk!.ChunkMaterials)
@@ -53,92 +44,347 @@ public class MeshConverter
                 materialNameStr += $".{dict[materialNameStr]++:D3}";
             }
 
-            var material = _modelRoot.CreateMaterial(materialNameStr);
-
-            if (materialNameStr == "stickers")
-            {
-                material.InitializePBRSpecularGlossiness();
-                var diffuse = material.FindChannel("Diffuse");
-                if (diffuse.HasValue)
-                {
-                    diffuse.Value.SetTexture(0, image1);
-                }
-
-                var normal = material.FindChannel("Normal");
-                if (normal.HasValue)
-                {
-                    normal.Value.SetTexture(0, image2);
-                }
-            }
-
-            result.Add(material);
+            result.Add(_modelRoot.CreateMaterial(materialNameStr));
         }
 
         return result;
     }
 
-    private class ElementInfo
+    private void ExtractSkeleton(CMesh mesh)
     {
-        private MemoryStream _stream = new MemoryStream();
+        for (int i = 0; i < mesh.BoneNames.Count; i++)
+        {
+            var boneNode = _modelRoot.CreateLogicalNode();
+            boneNode.Name = mesh.BoneNames[i];
 
-        public string AttributeKey { get; }
-        public GpuWrapApiVertexPackingePackingType Type { get; }
-        public byte Size { get; }
+            var boneRig = mesh.BoneRigMatrices[i];
 
-        public DimensionType DimensionType { get; set; }
-        public EncodingType EncodingType { get; set; }
-        public bool Normalized { get; set; }
+            var localMatrix = new Matrix4x4();
+
+            localMatrix.M11 = 1;
+            localMatrix.M22 = 1;
+            localMatrix.M33 = 1;
+            localMatrix.M41 = boneRig.W.X;
+            localMatrix.M42 = -boneRig.W.Y;
+            localMatrix.M43 = boneRig.W.Z;
+            localMatrix.M44 = boneRig.W.W;
+
+            boneNode.LocalMatrix = localMatrix;
+        }
+    }
+
+    private enum ElementType
+    {
+        Unknown,
+        Todo,
+        Main,
+        VehicleDamage
+    }
+
+    private class VertexElement
+    {
+        private readonly GpuWrapApiVertexPackingPackingElement _element;
+        
+        private readonly MemoryStream _stream = new();
+        private BinaryWriter _writer;
+
+        public ElementType ElementType { get; private set; } = ElementType.Unknown;
+        public string AttributeKey { get; private set; }
+
+        public DimensionType DimensionType { get; private set; }
+        public EncodingType EncodingType { get; private set; }
+        public bool Normalized { get; private set; }
+
+        public byte DataSize { get; private set; }
 
         public BinaryWriter Writer { get; }
 
-        public ElementInfo(string attributeKey, GpuWrapApiVertexPackingePackingType type, byte size)
+        public VertexElement(GpuWrapApiVertexPackingPackingElement element)
         {
-            AttributeKey = attributeKey;
-            Type = type;
-            Size = GetSize(Type);
-            Writer = new BinaryWriter(_stream);
+            _element = element;
+            _writer = new BinaryWriter(_stream);
 
-            GetSettings();
+            GetInfo();
         }
 
-        public byte[] GetArray()
+        private void GetInfo()
         {
-            return _stream.ToArray();
-        }
+            switch ((GpuWrapApiVertexPackingePackingUsage)_element.Usage)
+            {
+                case GpuWrapApiVertexPackingePackingUsage.PS_Position:
+                    ElementType = ElementType.Main;
+                    AttributeKey = "POSITION";
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_Normal:
+                    ElementType = ElementType.Main;
+                    AttributeKey = "NORMAL";
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_Tangent:
+                    ElementType = ElementType.Main;
+                    AttributeKey = "TANGENT";
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_TexCoord:
+                    ElementType = ElementType.Main;
+                    AttributeKey = $"TEXCOORD_{_element.UsageIndex}";
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_Color:
+                    ElementType = ElementType.Main;
+                    AttributeKey = $"COLOR_{_element.UsageIndex}";
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_VehicleDmgNormal:
+                    ElementType = ElementType.VehicleDamage;
+                    AttributeKey = "NORMAL";
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_VehicleDmgPosition:
+                    ElementType = ElementType.VehicleDamage;
+                    AttributeKey = "POSITION";
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_SkinIndices:
+                    ElementType = ElementType.Main;
+                    AttributeKey = $"JOINTS_{_element.UsageIndex}";
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_SkinWeights:
+                    ElementType = ElementType.Main;
+                    AttributeKey = $"WEIGHTS_{_element.UsageIndex}";
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_DestructionIndices:
+                    ElementType = ElementType.Todo;
+                    AttributeKey = $"???";
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_MultilayerPaint:
+                    ElementType = ElementType.Todo;
+                    AttributeKey = $"???";
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_Invalid:
+                case GpuWrapApiVertexPackingePackingUsage.PS_SysPosition:
+                case GpuWrapApiVertexPackingePackingUsage.PS_Binormal:
+                case GpuWrapApiVertexPackingePackingUsage.PS_InstanceTransform:
+                case GpuWrapApiVertexPackingePackingUsage.PS_InstanceLODParams:
+                case GpuWrapApiVertexPackingePackingUsage.PS_InstanceSkinningData:
+                case GpuWrapApiVertexPackingePackingUsage.PS_PatchSize:
+                case GpuWrapApiVertexPackingePackingUsage.PS_PatchBias:
+                case GpuWrapApiVertexPackingePackingUsage.PS_ExtraData:
+                case GpuWrapApiVertexPackingePackingUsage.PS_PositionDelta:
+                case GpuWrapApiVertexPackingePackingUsage.PS_LightBlockerIntensity:
+                case GpuWrapApiVertexPackingePackingUsage.PS_BoneIndex:
+                case GpuWrapApiVertexPackingePackingUsage.PS_Padding:
+                case GpuWrapApiVertexPackingePackingUsage.PS_PatchOffset:
+                case GpuWrapApiVertexPackingePackingUsage.PS_Max:
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(_element.Usage), _element.Usage, null);
+            }
 
-        private void GetSettings()
-        {
-            switch (Type)
+            switch ((GpuWrapApiVertexPackingePackingType)_element.Type)
             {
                 case GpuWrapApiVertexPackingePackingType.PT_Short4N:
                     DimensionType = DimensionType.VEC3;
                     EncodingType = EncodingType.FLOAT;
                     Normalized = false;
+
+                    DataSize = 8;
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Float16_2:
                     DimensionType = DimensionType.VEC2;
                     EncodingType = EncodingType.FLOAT;
                     Normalized = false;
+
+                    DataSize = 4;
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Dec4:
                     DimensionType = DimensionType.VEC3;
                     EncodingType = EncodingType.FLOAT;
                     Normalized = false;
+
+                    DataSize = 4;
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Color:
                     DimensionType = DimensionType.VEC4;
                     EncodingType = EncodingType.FLOAT;
                     Normalized = false;
+
+                    DataSize = 4;
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Float4:
                     DimensionType = DimensionType.VEC3;
                     EncodingType = EncodingType.FLOAT;
                     Normalized = false;
+
+                    DataSize = 16;
                     break;
+                case GpuWrapApiVertexPackingePackingType.PT_UByte4:
+                    DimensionType = DimensionType.VEC4;
+                    EncodingType = EncodingType.UNSIGNED_BYTE;
+                    Normalized = false;
+
+                    DataSize = 4;
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_UByte4N: // N => Normalized?
+                    DimensionType = DimensionType.VEC4;
+                    EncodingType = EncodingType.FLOAT;
+                    Normalized = false;
+
+                    DataSize = 4;
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_UShort2:
+                    DimensionType = DimensionType.VEC2;
+                    EncodingType = EncodingType.UNSIGNED_SHORT;
+                    Normalized = false;
+
+                    DataSize = 4;
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_Float1:
+                    DimensionType = DimensionType.SCALAR;
+                    EncodingType = EncodingType.FLOAT;
+                    Normalized = false;
+
+                    DataSize = 4;
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_Invalid:
+                case GpuWrapApiVertexPackingePackingType.PT_Float2:
+                case GpuWrapApiVertexPackingePackingType.PT_Float3:
+                case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
+                case GpuWrapApiVertexPackingePackingType.PT_UShort1:
+                case GpuWrapApiVertexPackingePackingType.PT_UShort4:
+                case GpuWrapApiVertexPackingePackingType.PT_UShort4N:
+                case GpuWrapApiVertexPackingePackingType.PT_Short1:
+                case GpuWrapApiVertexPackingePackingType.PT_Short2:
+                case GpuWrapApiVertexPackingePackingType.PT_Short4:
+                case GpuWrapApiVertexPackingePackingType.PT_UInt1:
+                case GpuWrapApiVertexPackingePackingType.PT_UInt2:
+                case GpuWrapApiVertexPackingePackingType.PT_UInt3:
+                case GpuWrapApiVertexPackingePackingType.PT_UInt4:
+                case GpuWrapApiVertexPackingePackingType.PT_Int1:
+                case GpuWrapApiVertexPackingePackingType.PT_Int2:
+                case GpuWrapApiVertexPackingePackingType.PT_Int3:
+                case GpuWrapApiVertexPackingePackingType.PT_Int4:
+                case GpuWrapApiVertexPackingePackingType.PT_UByte1:
+                case GpuWrapApiVertexPackingePackingType.PT_UByte1F:
+                case GpuWrapApiVertexPackingePackingType.PT_Byte4N:
+                case GpuWrapApiVertexPackingePackingType.PT_Index16:
+                case GpuWrapApiVertexPackingePackingType.PT_Index32:
+                case GpuWrapApiVertexPackingePackingType.PT_Max:
                 default:
-                    throw new Exception();
+                    throw new ArgumentOutOfRangeException(nameof(_element.Type), _element.Type, null);
             }
         }
+
+        public void Read(BinaryReader reader, Vector4 quantizationScale, Vector4 quantizationOffset)
+        {
+            switch ((GpuWrapApiVertexPackingePackingType)_element.Type)
+            {
+                case GpuWrapApiVertexPackingePackingType.PT_Short4N:
+                    var x1 = (reader.ReadInt16() / 32767f * quantizationScale.X) + quantizationOffset.X;
+                    var y1 = (reader.ReadInt16() / 32767f * quantizationScale.Y) + quantizationOffset.Y;
+                    var z1 = (reader.ReadInt16() / 32767f * quantizationScale.Z) + quantizationOffset.Z;
+                    var w1 = (reader.ReadInt16() / 32767f * quantizationScale.W) + quantizationOffset.W;
+
+                    // Z up to Y up and LHCS to RHCS
+                    _writer.Write(x1);
+                    _writer.Write(z1);
+                    _writer.Write(-y1);
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_Float16_2:
+                    var x2 = (float)BitConverter.ToHalf(reader.ReadBytes(2));
+                    var y2 = 1F - (float)BitConverter.ToHalf(reader.ReadBytes(2));
+
+                    _writer.Write(x2);
+                    _writer.Write(y2);
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_Dec4:
+                    var u32 = reader.ReadUInt32();
+
+                    var x3 = Convert.ToSingle(u32 & 0x3ff);
+                    var y3 = Convert.ToSingle((u32 >> 10) & 0x3ff);
+                    var z3 = Convert.ToSingle((u32 >> 20) & 0x3ff);
+                    var dequant = 1f / 1023f;
+                    x3 = (x3 * 2 * dequant) - 1f;
+                    y3 = (y3 * 2 * dequant) - 1f;
+                    z3 = (z3 * 2 * dequant) - 1f;
+
+                    _writer.Write(x3);
+                    _writer.Write(z3);
+                    _writer.Write(-y3);
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_Color:
+                    _writer.Write(reader.ReadByte() / 255f);
+                    _writer.Write(reader.ReadByte() / 255f);
+                    _writer.Write(reader.ReadByte() / 255f);
+                    _writer.Write(reader.ReadByte() / 255f);
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_Float4:
+                    var x5 = reader.ReadSingle() * 1; // 100?
+                    var y5 = reader.ReadSingle() * 1; // 100?
+                    var z5 = reader.ReadSingle() * 1; // 100?
+                    var w5 = reader.ReadSingle() * 100;
+
+                    _writer.Write(x5);
+                    _writer.Write(z5);
+                    _writer.Write(-y5);
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_UByte4:
+                    var x6 = reader.ReadByte();
+                    var y6 = reader.ReadByte();
+                    var z6 = reader.ReadByte();
+                    var w6 = reader.ReadByte();
+
+                    _writer.Write(x6);
+                    _writer.Write(y6);
+                    _writer.Write(z6);
+                    _writer.Write(w6);
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_UByte4N:
+                    var x7 = reader.ReadByte() / 255f;
+                    var y7 = reader.ReadByte() / 255f;
+                    var z7 = reader.ReadByte() / 255f;
+                    var w7 = reader.ReadByte() / 255f;
+
+                    _writer.Write(x7);
+                    _writer.Write(y7);
+                    _writer.Write(z7);
+                    _writer.Write(w7);
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_UShort2:
+                    var x8 = reader.ReadUInt16();
+                    var y8 = reader.ReadUInt16();
+
+                    _writer.Write(x8);
+                    _writer.Write(y8);
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_Float1:
+                    var x9 = reader.ReadSingle();
+
+                    _writer.Write(x9);
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_Invalid:
+                case GpuWrapApiVertexPackingePackingType.PT_Float2:
+                case GpuWrapApiVertexPackingePackingType.PT_Float3:
+                case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
+                case GpuWrapApiVertexPackingePackingType.PT_UShort1:
+                case GpuWrapApiVertexPackingePackingType.PT_UShort4:
+                case GpuWrapApiVertexPackingePackingType.PT_UShort4N:
+                case GpuWrapApiVertexPackingePackingType.PT_Short1:
+                case GpuWrapApiVertexPackingePackingType.PT_Short2:
+                case GpuWrapApiVertexPackingePackingType.PT_Short4:
+                case GpuWrapApiVertexPackingePackingType.PT_UInt1:
+                case GpuWrapApiVertexPackingePackingType.PT_UInt2:
+                case GpuWrapApiVertexPackingePackingType.PT_UInt3:
+                case GpuWrapApiVertexPackingePackingType.PT_UInt4:
+                case GpuWrapApiVertexPackingePackingType.PT_Int1:
+                case GpuWrapApiVertexPackingePackingType.PT_Int2:
+                case GpuWrapApiVertexPackingePackingType.PT_Int3:
+                case GpuWrapApiVertexPackingePackingType.PT_Int4:
+                case GpuWrapApiVertexPackingePackingType.PT_UByte1:
+                case GpuWrapApiVertexPackingePackingType.PT_UByte1F:
+                case GpuWrapApiVertexPackingePackingType.PT_Byte4N:
+                case GpuWrapApiVertexPackingePackingType.PT_Index16:
+                case GpuWrapApiVertexPackingePackingType.PT_Index32:
+                case GpuWrapApiVertexPackingePackingType.PT_Max:
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(_element.Type), _element.Type, null);
+            }
+        }
+
+        public byte[] GetArray() => _stream.ToArray();
     }
 
     private void ExtractMeshes(rendRenderMeshBlob rendMeshBlob, IList<Material> materials)
@@ -167,7 +413,7 @@ public class MeshConverter
             using var ms1 = new MemoryStream();
             using var bw1 = new BinaryWriter(ms1);
 
-            var dict = new Dictionary<int, List<ElementInfo>>();
+            var dict = new Dictionary<int, List<VertexElement>>();
 
             foreach (var vertexLayoutElement in renderChunkInfo.ChunkVertices.VertexLayout.Elements)
             {
@@ -183,58 +429,11 @@ public class MeshConverter
 
                 if (!dict.TryGetValue(vertexLayoutElement.StreamIndex, out var lst))
                 {
-                    lst = new List<ElementInfo>();
+                    lst = new List<VertexElement>();
                     dict.Add(vertexLayoutElement.StreamIndex, lst);
                 }
 
-                string? attribute = null;
-                switch ((GpuWrapApiVertexPackingePackingUsage)vertexLayoutElement.Usage)
-                {
-                    case GpuWrapApiVertexPackingePackingUsage.PS_Position:
-                        attribute = "POSITION";
-                        break;
-                    case GpuWrapApiVertexPackingePackingUsage.PS_Normal:
-                        attribute = "NORMAL";
-                        break;
-                    case GpuWrapApiVertexPackingePackingUsage.PS_Tangent:
-                        attribute = "TANGENT";
-                        break;
-                    case GpuWrapApiVertexPackingePackingUsage.PS_TexCoord:
-                        attribute = $"TEXCOORD_{vertexLayoutElement.UsageIndex}";
-                        break;
-                    case GpuWrapApiVertexPackingePackingUsage.PS_Color:
-                        attribute = $"COLOR_{vertexLayoutElement.UsageIndex}";
-                        break;
-                    case GpuWrapApiVertexPackingePackingUsage.PS_VehicleDmgNormal:
-                        attribute = "_VEHICLE_DAMAGE_NORMAL";
-                        break;
-                    case GpuWrapApiVertexPackingePackingUsage.PS_VehicleDmgPosition:
-                        attribute = "_VEHICLE_DAMAGE_POSITION";
-                        break;
-                    case GpuWrapApiVertexPackingePackingUsage.PS_Invalid:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_SysPosition:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_Binormal:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_SkinIndices:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_SkinWeights:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_DestructionIndices:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_MultilayerPaint:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_InstanceTransform:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_InstanceLODParams:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_InstanceSkinningData:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_PatchSize:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_PatchBias:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_ExtraData:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_PositionDelta:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_LightBlockerIntensity:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_BoneIndex:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_Padding:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_PatchOffset:
-                    case GpuWrapApiVertexPackingePackingUsage.PS_Max:
-                    default:
-                        continue;
-                }
-                
-                lst.Add(new ElementInfo(attribute, vertexLayoutElement.Type, GetSize(vertexLayoutElement.Type)));
+                lst.Add(new VertexElement(vertexLayoutElement));
             }
 
             foreach (var (index, elementInfos) in dict)
@@ -245,8 +444,8 @@ public class MeshConverter
                 byte totalSize = 0;
                 foreach (var elementInfo in elementInfos)
                 {
-                    sizes.Add(elementInfo.Size);
-                    totalSize += elementInfo.Size;
+                    sizes.Add(elementInfo.DataSize);
+                    totalSize += elementInfo.DataSize;
                 }
 
                 if (renderChunkInfo.ChunkVertices.VertexLayout.SlotStrides[index] != totalSize)
@@ -256,71 +455,23 @@ public class MeshConverter
 
                 for (var j = 0; j < renderChunkInfo.NumVertices; j++)
                 {
-                    if (bufferReader.BaseStream.Position != offset + totalSize * j)
+                    var nextOffset = offset + totalSize * j;
+                    if (bufferReader.BaseStream.Position != nextOffset)
                     {
-                        bufferReader.BaseStream.Position = offset + totalSize * j;
+                        if (nextOffset > bufferReader.BaseStream.Position)
+                        {
+                            var diff = nextOffset - bufferReader.BaseStream.Position;
+                            var tmp = bufferReader.ReadBytes((int)diff); // always 0, padding?
+                        }
+                        else
+                        {
+                            bufferReader.BaseStream.Position = nextOffset;
+                        }
                     }
 
                     foreach (var elementInfo in elementInfos)
                     {
-                        switch (elementInfo.Type)
-                        {
-                            case GpuWrapApiVertexPackingePackingType.PT_Short4N:
-                                var x1 = (bufferReader.ReadInt16() / 32767f * rendMeshBlob.Header.QuantizationScale.X) + rendMeshBlob.Header.QuantizationOffset.X;
-                                var y1 = (bufferReader.ReadInt16() / 32767f * rendMeshBlob.Header.QuantizationScale.Y) + rendMeshBlob.Header.QuantizationOffset.Y;
-                                var z1 = (bufferReader.ReadInt16() / 32767f * rendMeshBlob.Header.QuantizationScale.Z) + rendMeshBlob.Header.QuantizationOffset.Z;
-                                var w1 = (bufferReader.ReadInt16() / 32767f * rendMeshBlob.Header.QuantizationScale.W) + rendMeshBlob.Header.QuantizationOffset.W;
-
-                                // Z up to Y up and LHCS to RHCS
-                                elementInfo.Writer.Write(x1);
-                                elementInfo.Writer.Write(z1);
-                                elementInfo.Writer.Write(-y1);
-
-                                break;
-                            case GpuWrapApiVertexPackingePackingType.PT_Float16_2:
-                                var x2 = (float)BitConverter.ToHalf(bufferReader.ReadBytes(2));
-                                var y2 = 1F - (float)BitConverter.ToHalf(bufferReader.ReadBytes(2));
-
-                                elementInfo.Writer.Write(x2);
-                                elementInfo.Writer.Write(y2);
-
-                                break;
-                            case GpuWrapApiVertexPackingePackingType.PT_Dec4:
-                                var u32 = bufferReader.ReadUInt32();
-
-                                var x3 = Convert.ToSingle(u32 & 0x3ff);
-                                var y3 = Convert.ToSingle((u32 >> 10) & 0x3ff);
-                                var z3 = Convert.ToSingle((u32 >> 20) & 0x3ff);
-                                var dequant = 1f / 1023f;
-                                x3 = (x3 * 2 * dequant) - 1f;
-                                y3 = (y3 * 2 * dequant) - 1f;
-                                z3 = (z3 * 2 * dequant) - 1f;
-
-                                elementInfo.Writer.Write(x3);
-                                elementInfo.Writer.Write(z3);
-                                elementInfo.Writer.Write(-y3);
-
-                                break;
-                            case GpuWrapApiVertexPackingePackingType.PT_Color:
-                                elementInfo.Writer.Write(bufferReader.ReadByte() / 255f);
-                                elementInfo.Writer.Write(bufferReader.ReadByte() / 255f);
-                                elementInfo.Writer.Write(bufferReader.ReadByte() / 255f);
-                                elementInfo.Writer.Write(bufferReader.ReadByte() / 255f);
-                                break;
-                            case GpuWrapApiVertexPackingePackingType.PT_Float4:
-                                var x5 = bufferReader.ReadSingle() * 1; // 100?
-                                var y5 = bufferReader.ReadSingle() * 1; // 100?
-                                var z5 = bufferReader.ReadSingle() * 1; // 100?
-                                var w5 = bufferReader.ReadSingle() * 100;
-                                
-                                elementInfo.Writer.Write(x5);
-                                elementInfo.Writer.Write(z5);
-                                elementInfo.Writer.Write(-y5);
-                                //elementInfo.Writer.Write(bufferReader.ReadSingle());
-                                break;
-                            default:
-                                throw new Exception();
-                        }
+                        elementInfo.Read(bufferReader, rendMeshBlob.Header.QuantizationScale, rendMeshBlob.Header.QuantizationOffset);
                     }
                 }
 
@@ -329,20 +480,23 @@ public class MeshConverter
                 {
                     var buffer = elementInfo.GetArray();
 
-                    if (elementInfo.AttributeKey.StartsWith("_VEHICLE_DAMAGE_"))
+                    var acc = _modelRoot.CreateAccessor();
+                    var buff = _modelRoot.UseBufferView(buffer, 0, buffer.Length, 0, BufferMode.ARRAY_BUFFER);
+                    acc.SetVertexData(buff, 0, renderChunkInfo.NumVertices, elementInfo.DimensionType, elementInfo.EncodingType, elementInfo.Normalized);
+
+                    switch (elementInfo.ElementType)
                     {
-                        var name = elementInfo.AttributeKey[16..];
-                        var acc = _modelRoot.CreateAccessor();
-                        var buff = _modelRoot.UseBufferView(buffer, 0, buffer.Length, 0, BufferMode.ARRAY_BUFFER);
-                        acc.SetVertexData(buff, 0, renderChunkInfo.NumVertices, elementInfo.DimensionType, elementInfo.EncodingType, elementInfo.Normalized);
-                        vehicleDict.Add(name, acc);
-                    }
-                    else
-                    {
-                        var acc = _modelRoot.CreateAccessor();
-                        var buff = _modelRoot.UseBufferView(buffer, 0, buffer.Length, 0, BufferMode.ARRAY_BUFFER);
-                        acc.SetVertexData(buff, 0, renderChunkInfo.NumVertices, elementInfo.DimensionType, elementInfo.EncodingType, elementInfo.Normalized);
-                        primitive.SetVertexAccessor(elementInfo.AttributeKey, acc);
+                        case ElementType.Todo:
+                            break;
+                        case ElementType.Main:
+                            primitive.SetVertexAccessor(elementInfo.AttributeKey, acc);
+                            break;
+                        case ElementType.VehicleDamage:
+                            vehicleDict.Add(elementInfo.AttributeKey, acc);
+                            break;
+                        case ElementType.Unknown:
+                        default:
+                            throw new ArgumentOutOfRangeException();
                     }
                 }
 
