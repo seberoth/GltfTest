@@ -46,20 +46,16 @@ public class MeshConverter
     private List<Material> ExtractMaterials(CMesh mesh)
     {
         var result = new List<Material>();
-        var dict = new Dictionary<string, uint>();
+        var dict = new Dictionary<string, Material>();
         foreach (var materialName in mesh.Appearances[0].Chunk!.ChunkMaterials)
         {
             var materialNameStr = materialName.GetResolvedText()!;
             if (!dict.ContainsKey(materialNameStr))
             {
-                dict.Add(materialNameStr, 1);
-            }
-            else
-            {
-                materialNameStr += $".{dict[materialNameStr]++:D3}";
+                dict.Add(materialNameStr, _modelRoot.CreateMaterial(materialNameStr));
             }
 
-            result.Add(_modelRoot.CreateMaterial(materialNameStr));
+            result.Add(dict[materialNameStr]);
         }
 
         return result;
@@ -126,6 +122,7 @@ public class MeshConverter
         Unknown,
         Todo,
         Main,
+        Garment,
         VehicleDamage
     }
 
@@ -145,15 +142,15 @@ public class MeshConverter
 
         public BinaryWriter Writer { get; }
 
-        public VertexElement(GpuWrapApiVertexPackingPackingElement element)
+        public VertexElement(GpuWrapApiVertexPackingPackingElement element, EMaterialVertexFactory vertexFactory)
         {
             _element = element;
             _writer = new BinaryWriter(_stream);
 
-            GetInfo();
+            GetInfo(vertexFactory);
         }
 
-        private void GetInfo()
+        private void GetInfo(EMaterialVertexFactory vertexFactory)
         {
             switch ((GpuWrapApiVertexPackingePackingUsage)_element.Usage)
             {
@@ -223,6 +220,23 @@ public class MeshConverter
 
                     DstFormat = new(DimensionType.SCALAR, EncodingType.FLOAT, false);
                     break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_ExtraData:
+                    if (vertexFactory is
+                        EMaterialVertexFactory.MVF_GarmentMeshSkinned or
+                        EMaterialVertexFactory.MVF_GarmentMeshExtSkinned or
+                        EMaterialVertexFactory.MVF_GarmentMeshSkinnedLightBlockers or
+                        EMaterialVertexFactory.MVF_GarmentMeshExtSkinnedLightBlockers)
+                    {
+                        ElementType = ElementType.Garment;
+                        AttributeKey = "POSITION";
+
+                        DstFormat = new(DimensionType.VEC3, EncodingType.FLOAT, false);
+                    }
+                    else
+                    {
+                        throw new NotSupportedException();
+                    }
+                    break;
                 case GpuWrapApiVertexPackingePackingUsage.PS_Invalid:
                 case GpuWrapApiVertexPackingePackingUsage.PS_SysPosition:
                 case GpuWrapApiVertexPackingePackingUsage.PS_Binormal:
@@ -231,7 +245,6 @@ public class MeshConverter
                 case GpuWrapApiVertexPackingePackingUsage.PS_InstanceSkinningData:
                 case GpuWrapApiVertexPackingePackingUsage.PS_PatchSize:
                 case GpuWrapApiVertexPackingePackingUsage.PS_PatchBias:
-                case GpuWrapApiVertexPackingePackingUsage.PS_ExtraData:
                 case GpuWrapApiVertexPackingePackingUsage.PS_PositionDelta:
                 case GpuWrapApiVertexPackingePackingUsage.PS_LightBlockerIntensity:
                 case GpuWrapApiVertexPackingePackingUsage.PS_BoneIndex:
@@ -271,10 +284,12 @@ public class MeshConverter
                 case GpuWrapApiVertexPackingePackingType.PT_Float1:
                     DataSize = 4;
                     break;
+                case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
+                    DataSize = 8;
+                    break;
                 case GpuWrapApiVertexPackingePackingType.PT_Invalid:
                 case GpuWrapApiVertexPackingePackingType.PT_Float2:
                 case GpuWrapApiVertexPackingePackingType.PT_Float3:
-                case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
                 case GpuWrapApiVertexPackingePackingType.PT_UShort1:
                 case GpuWrapApiVertexPackingePackingType.PT_UShort4:
                 case GpuWrapApiVertexPackingePackingType.PT_UShort4N:
@@ -384,10 +399,18 @@ public class MeshConverter
                 case GpuWrapApiVertexPackingePackingType.PT_Float1:
                     Vertices.Add(reader.ReadSingle());
                     break;
+                case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
+                    Vertices.Add(new Vector4
+                    {
+                        X = (float)BitConverter.ToHalf(reader.ReadBytes(2)),
+                        Y = (float)BitConverter.ToHalf(reader.ReadBytes(2)),
+                        Z = (float)BitConverter.ToHalf(reader.ReadBytes(2)),
+                        W = (float)BitConverter.ToHalf(reader.ReadBytes(2)),
+                    });
+                    break;
                 case GpuWrapApiVertexPackingePackingType.PT_Invalid:
                 case GpuWrapApiVertexPackingePackingType.PT_Float2:
                 case GpuWrapApiVertexPackingePackingType.PT_Float3:
-                case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
                 case GpuWrapApiVertexPackingePackingType.PT_UShort1:
                 case GpuWrapApiVertexPackingePackingType.PT_UShort4:
                 case GpuWrapApiVertexPackingePackingType.PT_UShort4N:
@@ -637,10 +660,31 @@ public class MeshConverter
                         }
                     }
                     break;
+                case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
+                    foreach (Vector4 vertex in Vertices)
+                    {
+                        if (DstFormat.Encoding == EncodingType.FLOAT)
+                        {
+                            if (DstFormat.Dimensions == DimensionType.VEC3)
+                            {
+                                _writer.Write(vertex.X);
+                                _writer.Write(vertex.Y);
+                                _writer.Write(vertex.Z);
+                            }
+                            else
+                            {
+                                throw new NotSupportedException();
+                            }
+                        }
+                        else
+                        {
+                            throw new NotSupportedException();
+                        }
+                    }
+                    break;
                 case GpuWrapApiVertexPackingePackingType.PT_Invalid:
                 case GpuWrapApiVertexPackingePackingType.PT_Float2:
                 case GpuWrapApiVertexPackingePackingType.PT_Float3:
-                case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
                 case GpuWrapApiVertexPackingePackingType.PT_UShort1:
                 case GpuWrapApiVertexPackingePackingType.PT_UShort4:
                 case GpuWrapApiVertexPackingePackingType.PT_UShort4N:
@@ -715,7 +759,7 @@ public class MeshConverter
                     dict.Add(vertexLayoutElement.StreamIndex, lst);
                 }
 
-                lst.Add(new VertexElement(vertexLayoutElement));
+                lst.Add(new VertexElement(vertexLayoutElement, (EMaterialVertexFactory)(byte)renderChunkInfo.VertexFactory));
             }
 
             foreach (var (index, elementInfos) in dict)
@@ -759,7 +803,9 @@ public class MeshConverter
 
                 DoChecks(elementInfos);
 
+                var garmentDict = new Dictionary<string, Accessor>();
                 var vehicleDict = new Dictionary<string, Accessor>();
+
                 foreach (var elementInfo in elementInfos)
                 {
                     elementInfo.Write(rendMeshBlob.Header.QuantizationScale, rendMeshBlob.Header.QuantizationOffset);
@@ -779,15 +825,24 @@ public class MeshConverter
                         case ElementType.VehicleDamage:
                             vehicleDict.Add(elementInfo.AttributeKey, acc);
                             break;
+                        case ElementType.Garment:
+                            garmentDict.Add(elementInfo.AttributeKey, acc);
+                            break;
                         case ElementType.Unknown:
                         default:
                             throw new ArgumentOutOfRangeException();
                     }
                 }
 
+                var morphTargetIdx = 0;
+                if (garmentDict.Count > 0)
+                {
+                    primitive.SetMorphTargetAccessors(morphTargetIdx++, garmentDict);
+                }
+
                 if (vehicleDict.Count > 0)
                 {
-                    primitive.SetMorphTargetAccessors(0, vehicleDict);
+                    primitive.SetMorphTargetAccessors(morphTargetIdx++, vehicleDict);
                 }
             }
 
