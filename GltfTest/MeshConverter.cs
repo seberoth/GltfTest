@@ -6,10 +6,9 @@ using static WolvenKit.RED4.Types.Enums;
 using System.Numerics;
 using SharpGLTF.Transforms;
 using Vector2 = System.Numerics.Vector2;
+using Vector3 = System.Numerics.Vector3;
 using Vector4 = System.Numerics.Vector4;
 using SharpGLTF.Memory;
-using Quaternion = System.Numerics.Quaternion;
-using Vector3 = System.Numerics.Vector3;
 
 namespace GltfTest;
 
@@ -98,17 +97,21 @@ public class MeshConverter
             localMatrix.M32 = boneRig.Z.Z;
             localMatrix.M33 = -boneRig.Y.Z;
             localMatrix.M34 = 0;
-            
-            localMatrix.M41 = 0;
-            localMatrix.M42 = 0;
-            localMatrix.M43 = 0;
+
+            // translation below, sometimes it matches with bonePos, sometimes its shuffled, sometimes its diff values... bonePos is correct
+            localMatrix.M41 = boneRig.W.X;
+            localMatrix.M42 = -boneRig.W.Y;
+            localMatrix.M43 = boneRig.W.Z;
             localMatrix.M44 = 1;
 
             if (!Matrix4x4.Decompose(localMatrix, out var s, out var r, out var t))
             {
                 throw new Exception();
             }
-            boneNode.LocalTransform = new AffineTransform(s, r, new Vector3(bonePos.X, bonePos.Z, -bonePos.Y));
+
+            var translation = new Vector3(bonePos.X, bonePos.Z, -bonePos.Y);
+
+            boneNode.LocalTransform = new AffineTransform(s, r, translation);
 
             bones.Add(boneNode);
         }
