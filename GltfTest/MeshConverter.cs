@@ -8,6 +8,8 @@ using SharpGLTF.Transforms;
 using Vector2 = System.Numerics.Vector2;
 using Vector4 = System.Numerics.Vector4;
 using SharpGLTF.Memory;
+using Quaternion = System.Numerics.Quaternion;
+using Vector3 = System.Numerics.Vector3;
 
 namespace GltfTest;
 
@@ -31,6 +33,7 @@ public class MeshConverter
         {
             _skeleton = _modelRoot.CreateLogicalNode();
             _skeleton.Name = "Skeleton";
+            // _skeleton.LocalTransform = new AffineTransform(new Quaternion(0F, -0.7071067F, 0F, 0.7071068F));
 
             var (skin, bones) = ExtractSkeleton(cMesh, rendBlob);
         }
@@ -76,7 +79,8 @@ public class MeshConverter
             var boneNode = _skeleton.CreateNode(mesh.BoneNames[i]);
 
             var boneRig = mesh.BoneRigMatrices[i];
-            
+            var bonePos = rendRenderMeshBlob.Header.BonePositions[i];
+
 
             var localMatrix = new Matrix4x4();
 
@@ -89,20 +93,22 @@ public class MeshConverter
             localMatrix.M22 = boneRig.Z.Y;
             localMatrix.M23 = -boneRig.Y.Y;
             localMatrix.M24 = 0;
-
+            
             localMatrix.M31 = boneRig.X.Z;
             localMatrix.M32 = boneRig.Z.Z;
             localMatrix.M33 = -boneRig.Y.Z;
             localMatrix.M34 = 0;
+            
+            localMatrix.M41 = 0;
+            localMatrix.M42 = 0;
+            localMatrix.M43 = 0;
+            localMatrix.M44 = 1;
 
-            localMatrix.M41 = boneRig.W.X;
-            localMatrix.M42 = boneRig.W.Y;
-            localMatrix.M43 = boneRig.W.Z;
-            localMatrix.M44 = boneRig.W.W;
-
-            var tmp = (AffineTransform)localMatrix;
-
-            boneNode.LocalMatrix = localMatrix;
+            if (!Matrix4x4.Decompose(localMatrix, out var s, out var r, out var t))
+            {
+                throw new Exception();
+            }
+            boneNode.LocalTransform = new AffineTransform(s, r, new Vector3(bonePos.X, bonePos.Z, -bonePos.Y));
 
             bones.Add(boneNode);
         }
@@ -211,6 +217,8 @@ public class MeshConverter
                 case GpuWrapApiVertexPackingePackingUsage.PS_MultilayerPaint:
                     ElementType = ElementType.Todo;
                     AttributeKey = $"???";
+
+                    DstFormat = new(DimensionType.SCALAR, EncodingType.FLOAT, false);
                     break;
                 case GpuWrapApiVertexPackingePackingUsage.PS_Invalid:
                 case GpuWrapApiVertexPackingePackingUsage.PS_SysPosition:
@@ -609,7 +617,21 @@ public class MeshConverter
                 case GpuWrapApiVertexPackingePackingType.PT_Float1:
                     foreach (float vertex in Vertices)
                     {
-                        _writer.Write(vertex);
+                        if (DstFormat.Encoding == EncodingType.FLOAT)
+                        {
+                            if (DstFormat.Dimensions == DimensionType.SCALAR)
+                            {
+                                _writer.Write(vertex);
+                            }
+                            else
+                            {
+                                throw new NotSupportedException();
+                            }
+                        }
+                        else
+                        {
+                            throw new NotSupportedException();
+                        }
                     }
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Invalid:
@@ -800,6 +822,19 @@ public class MeshConverter
 
     private void DoChecks(List<VertexElement> elementInfos)
     {
+        var normals = elementInfos.FirstOrDefault(x => x.AttributeKey == "NORMAL");
+        if (normals != null)
+        {
+            for (int i = 0; i < normals.Vertices.Count; i++)
+            {
+                var normal = (Vector4)normals.Vertices[i];
+                if (!normal.IsValidTangent())
+                {
+                    normals.Vertices[i] = normal.SanitizeTangent();
+                }
+            }
+        }
+
         var tangents = elementInfos.FirstOrDefault(x => x.AttributeKey == "TANGENT");
         if (tangents != null)
         {
