@@ -232,10 +232,43 @@ public class MeshConverter
 
                         DstFormat = new(DimensionType.VEC3, EncodingType.FLOAT, false);
                     }
+                    else if (vertexFactory == EMaterialVertexFactory.MVF_MeshSpeedTree)
+                    {
+                        ElementType = ElementType.Todo;
+                        AttributeKey = "???";
+
+                        // has index 0, 1, 2
+                        switch (_element.UsageIndex)
+                        {
+                            case 0:
+                                // X seems to be byte
+                                // DstFormat = new(DimensionType.SCALAR, EncodingType.BYTE, false);
+                                DstFormat = new(DimensionType.VEC4, EncodingType.FLOAT, false);
+                                break;
+                            case 1:
+                            case 2:
+                                DstFormat = new(DimensionType.VEC4, EncodingType.FLOAT, false);
+                                break;
+                            default:
+                                throw new NotImplementedException();
+                        }
+                    }
                     else
                     {
                         throw new NotSupportedException();
                     }
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_LightBlockerIntensity:
+                    ElementType = ElementType.Todo;
+                    AttributeKey = $"???";
+
+                    DstFormat = new(DimensionType.SCALAR, EncodingType.FLOAT, false);
+                    break;
+                case GpuWrapApiVertexPackingePackingUsage.PS_BoneIndex:
+                    ElementType = ElementType.Todo;
+                    AttributeKey = $"???";
+
+                    DstFormat = new(DimensionType.SCALAR, EncodingType.UNSIGNED_INT, false);
                     break;
                 case GpuWrapApiVertexPackingePackingUsage.PS_Invalid:
                 case GpuWrapApiVertexPackingePackingUsage.PS_SysPosition:
@@ -246,8 +279,6 @@ public class MeshConverter
                 case GpuWrapApiVertexPackingePackingUsage.PS_PatchSize:
                 case GpuWrapApiVertexPackingePackingUsage.PS_PatchBias:
                 case GpuWrapApiVertexPackingePackingUsage.PS_PositionDelta:
-                case GpuWrapApiVertexPackingePackingUsage.PS_LightBlockerIntensity:
-                case GpuWrapApiVertexPackingePackingUsage.PS_BoneIndex:
                 case GpuWrapApiVertexPackingePackingUsage.PS_Padding:
                 case GpuWrapApiVertexPackingePackingUsage.PS_PatchOffset:
                 case GpuWrapApiVertexPackingePackingUsage.PS_Max:
@@ -287,6 +318,9 @@ public class MeshConverter
                 case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
                     DataSize = 8;
                     break;
+                case GpuWrapApiVertexPackingePackingType.PT_UInt1:
+                    DataSize = 4;
+                    break;
                 case GpuWrapApiVertexPackingePackingType.PT_Invalid:
                 case GpuWrapApiVertexPackingePackingType.PT_Float2:
                 case GpuWrapApiVertexPackingePackingType.PT_Float3:
@@ -296,7 +330,6 @@ public class MeshConverter
                 case GpuWrapApiVertexPackingePackingType.PT_Short1:
                 case GpuWrapApiVertexPackingePackingType.PT_Short2:
                 case GpuWrapApiVertexPackingePackingType.PT_Short4:
-                case GpuWrapApiVertexPackingePackingType.PT_UInt1:
                 case GpuWrapApiVertexPackingePackingType.PT_UInt2:
                 case GpuWrapApiVertexPackingePackingType.PT_UInt3:
                 case GpuWrapApiVertexPackingePackingType.PT_UInt4:
@@ -408,6 +441,9 @@ public class MeshConverter
                         W = (float)BitConverter.ToHalf(reader.ReadBytes(2)),
                     });
                     break;
+                case GpuWrapApiVertexPackingePackingType.PT_UInt1:
+                    Vertices.Add(reader.ReadUInt32());
+                    break;
                 case GpuWrapApiVertexPackingePackingType.PT_Invalid:
                 case GpuWrapApiVertexPackingePackingType.PT_Float2:
                 case GpuWrapApiVertexPackingePackingType.PT_Float3:
@@ -417,7 +453,6 @@ public class MeshConverter
                 case GpuWrapApiVertexPackingePackingType.PT_Short1:
                 case GpuWrapApiVertexPackingePackingType.PT_Short2:
                 case GpuWrapApiVertexPackingePackingType.PT_Short4:
-                case GpuWrapApiVertexPackingePackingType.PT_UInt1:
                 case GpuWrapApiVertexPackingePackingType.PT_UInt2:
                 case GpuWrapApiVertexPackingePackingType.PT_UInt3:
                 case GpuWrapApiVertexPackingePackingType.PT_UInt4:
@@ -558,9 +593,21 @@ public class MeshConverter
                         {
                             if (DstFormat.Dimensions == DimensionType.VEC3)
                             {
-                                _writer.Write(vertex.X / short.MaxValue);
-                                _writer.Write(vertex.Z / short.MaxValue);
-                                _writer.Write(-vertex.Y / short.MaxValue);
+                                var x = vertex.X / short.MaxValue;
+                                var y = vertex.Y / short.MaxValue;
+                                var z = vertex.Z / short.MaxValue;
+
+                                // Debug
+                                if (ElementType == ElementType.VehicleDamage && AttributeKey == "POSITION")
+                                {
+                                    x *= 100F;
+                                    y *= 100F;
+                                    z *= 100F;
+                                }
+
+                                _writer.Write(x);
+                                _writer.Write(z);
+                                _writer.Write(-y);
                             }
                             else
                             {
@@ -671,6 +718,33 @@ public class MeshConverter
                                 _writer.Write(vertex.Y);
                                 _writer.Write(vertex.Z);
                             }
+                            else if (DstFormat.Dimensions == DimensionType.VEC4)
+                            {
+                                _writer.Write(vertex.X);
+                                _writer.Write(vertex.Y);
+                                _writer.Write(vertex.Z);
+                                _writer.Write(vertex.W);
+                            }
+                            else
+                            {
+                                throw new NotSupportedException();
+                            }
+                        }
+                        else
+                        {
+                            throw new NotSupportedException();
+                        }
+                    }
+                    break;
+                case GpuWrapApiVertexPackingePackingType.PT_UInt1:
+                    foreach (uint vertex in Vertices)
+                    {
+                        if (DstFormat.Encoding == EncodingType.UNSIGNED_INT)
+                        {
+                            if (DstFormat.Dimensions == DimensionType.SCALAR)
+                            {
+                                _writer.Write(vertex);
+                            }
                             else
                             {
                                 throw new NotSupportedException();
@@ -691,7 +765,6 @@ public class MeshConverter
                 case GpuWrapApiVertexPackingePackingType.PT_Short1:
                 case GpuWrapApiVertexPackingePackingType.PT_Short2:
                 case GpuWrapApiVertexPackingePackingType.PT_Short4:
-                case GpuWrapApiVertexPackingePackingType.PT_UInt1:
                 case GpuWrapApiVertexPackingePackingType.PT_UInt2:
                 case GpuWrapApiVertexPackingePackingType.PT_UInt3:
                 case GpuWrapApiVertexPackingePackingType.PT_UInt4:
@@ -933,6 +1006,18 @@ public class MeshConverter
                 if (sum != 255)
                 {
                     weights0.Vertices[j] = vertex0 with { X = vertex0.X + (byte)(255 - sum) };
+                }
+            }
+        }
+
+        var texcoord1 = elementInfos.FirstOrDefault(x => x.AttributeKey == "TEXCOORD_1");
+        if (texcoord1 != null)
+        {
+            foreach (Vector2 vertex in texcoord1.Vertices)
+            {
+                if (vertex.X != 0 || vertex.Y != 0)
+                {
+
                 }
             }
         }
