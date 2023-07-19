@@ -9,22 +9,21 @@ using Vector2 = System.Numerics.Vector2;
 using Vector3 = System.Numerics.Vector3;
 using Vector4 = System.Numerics.Vector4;
 using SharpGLTF.Memory;
+using Quaternion = System.Numerics.Quaternion;
 
 namespace GltfTest;
 
-public class MeshConverter
+public partial class GltfConverter
 {
     private ModelRoot _modelRoot = ModelRoot.CreateModel();
     private Node _skeleton;
 
-    public void ToGltf(CR2WFile cr2w, string filePath)
+    public ModelRoot? ToGltf(CMesh cMesh)
     {
-        if (cr2w.RootChunk is not CMesh { RenderResourceBlob.Chunk: rendRenderMeshBlob rendBlob } cMesh)
+        if (cMesh is not { RenderResourceBlob.Chunk: rendRenderMeshBlob rendBlob })
         {
-            return;
+            return null;
         }
-
-        var t = ExtensionsFactory.SupportedExtensions;
 
         var materials = ExtractMaterials(cMesh);
 
@@ -32,7 +31,7 @@ public class MeshConverter
         {
             _skeleton = _modelRoot.CreateLogicalNode();
             _skeleton.Name = "Skeleton";
-            // _skeleton.LocalTransform = new AffineTransform(new Quaternion(0F, -0.7071067F, 0F, 0.7071068F));
+            //_skeleton.LocalTransform = new AffineTransform(new Quaternion(0F, -0.7071067F, 0F, 0.7071068F));
 
             var (skin, bones) = ExtractSkeleton(cMesh, rendBlob);
         }
@@ -40,7 +39,8 @@ public class MeshConverter
         var meshes = ExtractMeshes(rendBlob, materials);
 
         _modelRoot.MergeBuffers();
-        _modelRoot.SaveGLB(filePath, new WriteSettings { Validation = ValidationMode.Strict });
+        
+        return _modelRoot;
     }
 
     private List<Material> ExtractMaterials(CMesh mesh)
@@ -65,49 +65,18 @@ public class MeshConverter
     {
         var skin = _modelRoot.CreateSkin("Skeleton");
 
-        var offset = rendRenderMeshBlob.Header.QuantizationOffset;
-        var scale = rendRenderMeshBlob.Header.QuantizationScale;
-
         var bones = new List<Node>();
         for (int i = 0; i < mesh.BoneNames.Count; i++)
         {
             var boneNode = _skeleton.CreateNode(mesh.BoneNames[i]);
 
             var boneRig = mesh.BoneRigMatrices[i];
-            var bonePos = rendRenderMeshBlob.Header.BonePositions[i];
 
+            Matrix4x4.Invert(boneRig, out var inverseBoneRig);
+            inverseBoneRig.M44 = 1;
 
-            var localMatrix = new Matrix4x4();
-
-            localMatrix.M11 = boneRig.X.X;
-            localMatrix.M12 = boneRig.Z.X;
-            localMatrix.M13 = -boneRig.Y.X;
-            localMatrix.M14 = 0;
-
-            localMatrix.M21 = boneRig.X.Y;
-            localMatrix.M22 = boneRig.Z.Y;
-            localMatrix.M23 = -boneRig.Y.Y;
-            localMatrix.M24 = 0;
-            
-            localMatrix.M31 = boneRig.X.Z;
-            localMatrix.M32 = boneRig.Z.Z;
-            localMatrix.M33 = -boneRig.Y.Z;
-            localMatrix.M34 = 0;
-
-            // translation below, sometimes it matches with bonePos, sometimes its shuffled, sometimes its diff values... bonePos is correct
-            localMatrix.M41 = boneRig.W.X;
-            localMatrix.M42 = -boneRig.W.Y;
-            localMatrix.M43 = boneRig.W.Z;
-            localMatrix.M44 = 1;
-
-            if (!Matrix4x4.Decompose(localMatrix, out var s, out var r, out var t))
-            {
-                throw new Exception();
-            }
-
-            var translation = new Vector3(bonePos.X, bonePos.Z, -bonePos.Y);
-
-            boneNode.LocalTransform = new AffineTransform(s, r, translation);
+            // Maybe RotX?
+            boneNode.WorldMatrix = YUp(inverseBoneRig);
 
             bones.Add(boneNode);
         }
@@ -115,6 +84,36 @@ public class MeshConverter
         skin.BindJoints(bones.ToArray());
 
         return (skin, bones);
+    }
+
+    private Matrix4x4 RotX(Matrix4x4 src)
+    {
+        var axisBaseChange = new Matrix4x4(
+            1.0F, 0.0F, 0.0F, 0.0F,
+            0.0F, 0.0F, 1.0F, 0.0F,
+            0.0F, -1.0F, 0.0F, 0.0F,
+            0.0F, 0.0F, 0.0F, 1.0F);
+
+        return Matrix4x4.Multiply(axisBaseChange, src);
+    }
+
+    private Matrix4x4 YUp(Matrix4x4 src)
+    {
+        return src with
+        {
+            M12 = src.M13,
+            M13 = -src.M12,
+
+            M22 = src.M23,
+            M23 = -src.M22,
+
+            M32 = src.M33,
+            M33 = -src.M32,
+
+            M42 = src.M43,
+            M43 = -src.M42,
+            M44 = 1
+        };
     }
 
     private enum ElementType
@@ -786,7 +785,7 @@ public class MeshConverter
         public byte[] GetArray() => _stream.ToArray();
     }
 
-    private Dictionary<byte, Node> ExtractMeshes(rendRenderMeshBlob rendMeshBlob, IList<Material> materials)
+    private Dictionary<byte, Node> ExtractMeshes(rendRenderMeshBlob rendMeshBlob, IList<Material>? materials = null)
     {
         var ms = new MemoryStream(rendMeshBlob.RenderBuffer.Buffer.GetBytes());
         var bufferReader = new BinaryReader(ms);
@@ -795,7 +794,6 @@ public class MeshConverter
         for (var i = 0; i < rendMeshBlob.Header.RenderChunkInfos.Count; i++)
         {
             var renderChunkInfo = rendMeshBlob.Header.RenderChunkInfos[i];
-            var material = materials[i];
 
             if (!result.TryGetValue(renderChunkInfo.LodMask, out var node))
             {
@@ -807,7 +805,10 @@ public class MeshConverter
             }
             var mesh = node.Mesh;
             var primitive = mesh.CreatePrimitive();
-            primitive.Material = material;
+            if (materials != null)
+            {
+                primitive.Material = materials[i];
+            }
 
             using var ms1 = new MemoryStream();
             using var bw1 = new BinaryWriter(ms1);
