@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using GltfTest.Extras;
 using SharpGLTF.Schema2;
 using SharpGLTF.Validation;
 using WolvenKit.Common;
@@ -47,6 +48,8 @@ namespace GltfTest
             _parserService = new Red4ParserService(_hashService, _loggerService);
             _archiveManager = new ArchiveManager(_hashService, _parserService, _loggerService);
             _archiveManager.LoadGameArchives(new FileInfo(gamePath), false);
+
+            ExtensionsFactory.RegisterExtension<Material, MaterialCyberpunk>("CP_Material");
         }
     }
 }

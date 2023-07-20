@@ -12,6 +12,7 @@ using SharpGLTF.Memory;
 using Quaternion = System.Numerics.Quaternion;
 using WolvenKit.Common;
 using WolvenKit.RED4.CR2W;
+using GltfTest.Extras;
 
 namespace GltfTest;
 
@@ -55,6 +56,7 @@ public partial class GltfConverter
             if (!dict.ContainsKey(materialNameStr))
             {
                 var gMaterial = _modelRoot.CreateMaterial(materialNameStr);
+                var cpMaterial = gMaterial.UseExtension<MaterialCyberpunk>();
 
                 var material = mesh.MaterialEntries.First(x => x.Name == materialName);
                 if (material.IsLocalInstance)
@@ -64,9 +66,56 @@ public partial class GltfConverter
                     {
                         var parameters = GetMaterialParameters(materialInstance);
 
-                        if (parameters.ContainsKey("DiffuseTexture"))
+                        if (parameters.TryGetValue<IRedRef>("Albedo", out var val1))
+                        {
+                            cpMaterial.Albedo = GetImage(val1);
+                        }
+
+                        if (parameters.TryGetValue<CMaterialParameterTexture>("SecondaryAlbedo", out var val2))
+                        {
+                            cpMaterial.Albedo = GetImage(val2.Texture);
+                        }
+
+                        if (parameters.TryGetValue<CMaterialParameterScalar>("SecondaryAlbedoInfluence", out var val3))
+                        {
+                            cpMaterial.SecondaryAlbedoInfluence = new ScalarInfo() { Min = val3.Min, Max = val3.Max, Scalar = val3.Scalar };
+                        }
+
+                        if (parameters.TryGetValue<CMaterialParameterScalar>("SecondaryAlbedoTintColorInfluence", out var val4))
+                        {
+                            cpMaterial.SecondaryAlbedoTintColorInfluence = new ScalarInfo() { Min = val4.Min, Max = val4.Max, Scalar = val4.Scalar };
+                        }
+
+                        if (parameters.TryGetValue<IRedRef>("Normal", out var val5))
+                        {
+                            cpMaterial.Normal = GetImage(val5);
+                        }
+
+                        if (parameters.TryGetValue<IRedRef>("DetailNormal", out var val6))
+                        {
+                            cpMaterial.DetailNormal = GetImage(val6);
+                        }
+
+                        if (parameters.TryGetValue<IRedRef>("Roughness", out var val7))
+                        {
+                            cpMaterial.Roughness = GetImage(val7);
+                        }
+
+                        if (parameters.TryGetValue<CFloat>("DetailRoughnessBiasMin", out var val8))
+                        {
+                            cpMaterial.DetailRoughnessBiasMin = val8;
+                        }
+
+                        if (parameters.TryGetValue<CFloat>("DetailRoughnessBiasMax", out var val9))
+                        {
+                            cpMaterial.DetailRoughnessBiasMax = val9;
+                        }
+
+                        /*if (parameters.ContainsKey("DiffuseTexture"))
                         {
                             gMaterial.InitializePBRSpecularGlossiness();
+
+                            
 
                             var channel = gMaterial.FindChannel("Diffuse");
                             if (channel is { } materialChannel)
@@ -129,7 +178,7 @@ public partial class GltfConverter
                                     materialChannel3.SetTexture(0, image);
                                 }
                             }
-                        }
+                        }*/
                     }
                 }
 
@@ -161,11 +210,11 @@ public partial class GltfConverter
 
     
 
-    private Dictionary<CName, object> GetMaterialParameters(IMaterial src)
+    private MaterialParameterDictionary GetMaterialParameters(IMaterial src)
     {
         if (src is CMaterialTemplate materialTemplate)
         {
-            var result = new Dictionary<CName, object>();
+            var result = new MaterialParameterDictionary();
             foreach (var parameterHandle in materialTemplate.Parameters[2])
             {
                 if (parameterHandle.Chunk is not { } materialParameter)
@@ -183,7 +232,7 @@ public partial class GltfConverter
             var file = _file.GetResource(materialInstance.BaseMaterial.DepotPath);
             if (file == null)
             {
-                return new Dictionary<CName, object>();
+                return new MaterialParameterDictionary();
             }
 
             var result = GetMaterialParameters((IMaterial)file.Resource);
