@@ -10,37 +10,39 @@ using Vector3 = System.Numerics.Vector3;
 using Vector4 = System.Numerics.Vector4;
 using SharpGLTF.Memory;
 using Quaternion = System.Numerics.Quaternion;
+using WolvenKit.Common;
+using WolvenKit.RED4.CR2W;
 
 namespace GltfTest;
 
 public partial class GltfConverter
 {
+    private readonly IArchiveManager _archiveManager;
+
+    private readonly GameFileWrapper _file;
+
     private ModelRoot _modelRoot = ModelRoot.CreateModel();
-    private Node _skeleton;
+    private Node? _skeleton;
 
-    public ModelRoot? ToGltf(CMesh cMesh)
+    public GltfConverter(CR2WFile file, IArchiveManager archiveManager)
     {
-        if (cMesh is not { RenderResourceBlob.Chunk: rendRenderMeshBlob rendBlob })
+        _archiveManager = archiveManager;
+        _file = new GameFileWrapper(file, _archiveManager);
+    }
+
+    public void SaveGLB(string filePath, WriteSettings? settings = null)
+    {
+        if (_file.Resource is CMesh cMesh)
         {
-            return null;
+            var model = ToGltf(cMesh);
+            model!.SaveGLB(filePath, settings);
         }
 
-        var materials = ExtractMaterials(cMesh);
-
-        if (cMesh.BoneNames.Count > 0)
+        if (_file.Resource is MorphTargetMesh morphTargetMesh)
         {
-            _skeleton = _modelRoot.CreateLogicalNode();
-            _skeleton.Name = "Skeleton";
-            //_skeleton.LocalTransform = new AffineTransform(new Quaternion(0F, -0.7071067F, 0F, 0.7071068F));
-
-            var (skin, bones) = ExtractSkeleton(cMesh, rendBlob);
+            var model = ToGltf(morphTargetMesh);
+            model!.SaveGLB(filePath, settings);
         }
-
-        var meshes = ExtractMeshes(rendBlob, materials);
-
-        _modelRoot.MergeBuffers();
-        
-        return _modelRoot;
     }
 
     private List<Material> ExtractMaterials(CMesh mesh)
@@ -52,13 +54,152 @@ public partial class GltfConverter
             var materialNameStr = materialName.GetResolvedText()!;
             if (!dict.ContainsKey(materialNameStr))
             {
-                dict.Add(materialNameStr, _modelRoot.CreateMaterial(materialNameStr));
+                var gMaterial = _modelRoot.CreateMaterial(materialNameStr);
+
+                var material = mesh.MaterialEntries.First(x => x.Name == materialName);
+                if (material.IsLocalInstance)
+                {
+                    var tmp = mesh.LocalMaterialBuffer.Materials[material.Index];
+                    if (tmp is CMaterialInstance materialInstance)
+                    {
+                        var parameters = GetMaterialParameters(materialInstance);
+
+                        if (parameters.ContainsKey("DiffuseTexture"))
+                        {
+                            gMaterial.InitializePBRSpecularGlossiness();
+
+                            var channel = gMaterial.FindChannel("Diffuse");
+                            if (channel is { } materialChannel)
+                            {
+                                if (parameters.TryGetValue("DiffuseTexture", out var diffuseTextureObj) && diffuseTextureObj is IRedRef diffuseTexture)
+                                {
+                                    var image = GetImage(diffuseTexture);
+                                    if (image != null)
+                                    {
+                                        materialChannel.SetTexture(0, image);
+                                    }
+                                }
+
+                                if (parameters.TryGetValue("DiffuseColor", out var diffuseColorObj) && diffuseColorObj is CColor diffuseColor)
+                                {
+                                    materialChannel.Color = new Vector4(diffuseColor.Red, diffuseColor.Green, diffuseColor.Blue, diffuseColor.Alpha);
+                                }
+                            }
+                        }
+
+                        if (parameters.ContainsKey("Roughness"))
+                        {
+                            gMaterial.InitializePBRMetallicRoughness();
+
+                            var channel1 = gMaterial.FindChannel("BaseColor");
+                            if (channel1 is { } materialChannel1)
+                            {
+                                if (parameters.TryGetValue("Albedo", out var roughnessObj) && roughnessObj is IRedRef roughness)
+                                {
+                                    var image = GetImage(roughness);
+                                    if (image != null)
+                                    {
+                                        materialChannel1.SetTexture(0, image);
+                                    }
+                                }
+                            }
+
+                            var channel2 = gMaterial.FindChannel("MetallicRoughness");
+                            if (channel2 is { } materialChannel2)
+                            {
+                                if (parameters.TryGetValue("Roughness", out var roughnessObj) && roughnessObj is IRedRef roughness)
+                                {
+                                    var image = GetImage(roughness);
+                                    if (image != null)
+                                    {
+                                        materialChannel2.SetTexture(0, image);
+                                    }
+                                }
+                            }
+                        }
+
+                        var channel3 = gMaterial.FindChannel("Normal");
+                        if (channel3 is { } materialChannel3)
+                        {
+                            if (parameters.TryGetValue("Normal", out var roughnessObj) && roughnessObj is IRedRef roughness)
+                            {
+                                var image = GetImage(roughness);
+                                if (image != null)
+                                {
+                                    materialChannel3.SetTexture(0, image);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                dict.Add(materialNameStr, gMaterial);
             }
 
             result.Add(dict[materialNameStr]);
         }
 
         return result;
+    }
+
+    private Image? GetImage(IRedRef resourceReference)
+    {
+        var xbm = _file.GetResource(resourceReference.DepotPath);
+        if (xbm == null)
+        {
+            return null;
+        }
+
+        var redImage = RedImage.FromXBM((CBitmapTexture)xbm.Resource);
+        redImage.FlipV();
+
+        var image = _modelRoot.CreateImage();
+        image.Content = redImage.SaveToPNGMemory();
+
+        return image;
+    }
+
+    
+
+    private Dictionary<CName, object> GetMaterialParameters(IMaterial src)
+    {
+        if (src is CMaterialTemplate materialTemplate)
+        {
+            var result = new Dictionary<CName, object>();
+            foreach (var parameterHandle in materialTemplate.Parameters[2])
+            {
+                if (parameterHandle.Chunk is not { } materialParameter)
+                {
+                    continue;
+                }
+
+                result.Add(materialParameter.ParameterName, materialParameter);
+            }
+            return result;
+        }
+
+        if (src is CMaterialInstance materialInstance)
+        {
+            var file = _file.GetResource(materialInstance.BaseMaterial.DepotPath);
+            if (file == null)
+            {
+                return new Dictionary<CName, object>();
+            }
+
+            var result = GetMaterialParameters((IMaterial)file.Resource);
+            foreach (var pair in materialInstance.Values)
+            {
+                if (!result.ContainsKey(pair.Key))
+                {
+                    throw new NotSupportedException();
+                }
+
+                result[pair.Key] = pair.Value;
+            }
+            return result;
+        }
+
+        throw new NotImplementedException();
     }
 
     private (Skin skin, List<Node> bones) ExtractSkeleton(CMesh mesh, rendRenderMeshBlob rendRenderMeshBlob)
@@ -76,7 +217,7 @@ public partial class GltfConverter
             inverseBoneRig.M44 = 1;
 
             // Maybe RotX?
-            boneNode.WorldMatrix = YUp(inverseBoneRig);
+            boneNode.WorldMatrix = RotY(YUp(inverseBoneRig));
 
             bones.Add(boneNode);
         }
@@ -86,12 +227,12 @@ public partial class GltfConverter
         return (skin, bones);
     }
 
-    private Matrix4x4 RotX(Matrix4x4 src)
+    private Matrix4x4 RotY(Matrix4x4 src)
     {
         var axisBaseChange = new Matrix4x4(
-            1.0F, 0.0F, 0.0F, 0.0F,
             0.0F, 0.0F, 1.0F, 0.0F,
-            0.0F, -1.0F, 0.0F, 0.0F,
+            0.0F, 1.0F, 0.0F, 0.0F,
+            -1.0F, 0.0F, 0.0F, 0.0F,
             0.0F, 0.0F, 0.0F, 1.0F);
 
         return Matrix4x4.Multiply(axisBaseChange, src);
@@ -1022,71 +1163,5 @@ public partial class GltfConverter
                 }
             }
         }
-    }
-
-    public static byte GetSize(GpuWrapApiVertexPackingePackingType type)
-    {
-        switch (type)
-        {
-            case GpuWrapApiVertexPackingePackingType.PT_Short4N:
-                return 8;
-            case GpuWrapApiVertexPackingePackingType.PT_Float16_2:
-                return 4;
-            case GpuWrapApiVertexPackingePackingType.PT_Dec4:
-                return 4;
-            case GpuWrapApiVertexPackingePackingType.PT_Color:
-                return 4;
-            case GpuWrapApiVertexPackingePackingType.PT_Float4:
-                return 16;
-            case GpuWrapApiVertexPackingePackingType.PT_Invalid:
-            case GpuWrapApiVertexPackingePackingType.PT_Float1:
-            case GpuWrapApiVertexPackingePackingType.PT_Float2:
-            case GpuWrapApiVertexPackingePackingType.PT_Float3:
-            case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
-            case GpuWrapApiVertexPackingePackingType.PT_UShort1:
-            case GpuWrapApiVertexPackingePackingType.PT_UShort2:
-            case GpuWrapApiVertexPackingePackingType.PT_UShort4:
-            case GpuWrapApiVertexPackingePackingType.PT_UShort4N:
-            case GpuWrapApiVertexPackingePackingType.PT_Short1:
-            case GpuWrapApiVertexPackingePackingType.PT_Short2:
-            case GpuWrapApiVertexPackingePackingType.PT_Short4:
-            case GpuWrapApiVertexPackingePackingType.PT_UInt1:
-            case GpuWrapApiVertexPackingePackingType.PT_UInt2:
-            case GpuWrapApiVertexPackingePackingType.PT_UInt3:
-            case GpuWrapApiVertexPackingePackingType.PT_UInt4:
-            case GpuWrapApiVertexPackingePackingType.PT_Int1:
-            case GpuWrapApiVertexPackingePackingType.PT_Int2:
-            case GpuWrapApiVertexPackingePackingType.PT_Int3:
-            case GpuWrapApiVertexPackingePackingType.PT_Int4:
-            case GpuWrapApiVertexPackingePackingType.PT_UByte1:
-            case GpuWrapApiVertexPackingePackingType.PT_UByte1F:
-            case GpuWrapApiVertexPackingePackingType.PT_UByte4:
-            case GpuWrapApiVertexPackingePackingType.PT_UByte4N:
-            case GpuWrapApiVertexPackingePackingType.PT_Byte4N:
-            case GpuWrapApiVertexPackingePackingType.PT_Index16:
-            case GpuWrapApiVertexPackingePackingType.PT_Index32:
-            case GpuWrapApiVertexPackingePackingType.PT_Max:
-            default:
-                throw new ArgumentOutOfRangeException(nameof(type), type, null);
-        }
-    }
-
-    private void CreatePrimitive(byte[] buffer, MeshPrimitive primitive, string key, DimensionType dimensionType, EncodingType encodingType, bool normalized, int itemCount, int bpe)
-    {
-        var acc = _modelRoot.CreateAccessor();
-        var buff = _modelRoot.UseBufferView(buffer, 0, buffer.Length, 0, BufferMode.ARRAY_BUFFER);
-        acc.SetVertexData(buff, 0, itemCount, dimensionType, encodingType, normalized);
-        primitive.SetVertexAccessor(key, acc);
-    }
-
-    private void ExtractPosition(BinaryReader bufferReader, GpuWrapApiVertexPackingePackingType packingType, Mesh mesh)
-    {
-        bufferReader.BaseStream.Position = 0;
-
-        var acc = _modelRoot.CreateAccessor();
-        //acc.SetVertexData();
-
-        var primitive = mesh.CreatePrimitive();
-        primitive.SetVertexAccessor("POSITION", acc);
     }
 }

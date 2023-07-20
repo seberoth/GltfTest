@@ -9,6 +9,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WolvenKit.RED4", "WolvenKit
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WolvenKit.Core", "WolvenKit\WolvenKit.Core\WolvenKit.Core.csproj", "{70A7F41A-7E19-4123-857A-7658B379B3C0}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WolvenKit.Modkit", "WolvenKit\WolvenKit.Modkit\WolvenKit.Modkit.csproj", "{3153DB8E-BC16-4028-B20D-A33A8FD307DA}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WolvenKit.Common", "WolvenKit\WolvenKit.Common\WolvenKit.Common.csproj", "{84931D47-488C-4D34-90CE-7FAA0435DC56}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -41,6 +45,22 @@ Global
 		{70A7F41A-7E19-4123-857A-7658B379B3C0}.Release|Any CPU.Build.0 = Release|x64
 		{70A7F41A-7E19-4123-857A-7658B379B3C0}.Release|x64.ActiveCfg = Release|x64
 		{70A7F41A-7E19-4123-857A-7658B379B3C0}.Release|x64.Build.0 = Release|x64
+		{3153DB8E-BC16-4028-B20D-A33A8FD307DA}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{3153DB8E-BC16-4028-B20D-A33A8FD307DA}.Debug|Any CPU.Build.0 = Debug|x64
+		{3153DB8E-BC16-4028-B20D-A33A8FD307DA}.Debug|x64.ActiveCfg = Debug|x64
+		{3153DB8E-BC16-4028-B20D-A33A8FD307DA}.Debug|x64.Build.0 = Debug|x64
+		{3153DB8E-BC16-4028-B20D-A33A8FD307DA}.Release|Any CPU.ActiveCfg = Release|x64
+		{3153DB8E-BC16-4028-B20D-A33A8FD307DA}.Release|Any CPU.Build.0 = Release|x64
+		{3153DB8E-BC16-4028-B20D-A33A8FD307DA}.Release|x64.ActiveCfg = Release|x64
+		{3153DB8E-BC16-4028-B20D-A33A8FD307DA}.Release|x64.Build.0 = Release|x64
+		{84931D47-488C-4D34-90CE-7FAA0435DC56}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{84931D47-488C-4D34-90CE-7FAA0435DC56}.Debug|Any CPU.Build.0 = Debug|x64
+		{84931D47-488C-4D34-90CE-7FAA0435DC56}.Debug|x64.ActiveCfg = Debug|x64
+		{84931D47-488C-4D34-90CE-7FAA0435DC56}.Debug|x64.Build.0 = Debug|x64
+		{84931D47-488C-4D34-90CE-7FAA0435DC56}.Release|Any CPU.ActiveCfg = Release|x64
+		{84931D47-488C-4D34-90CE-7FAA0435DC56}.Release|Any CPU.Build.0 = Release|x64
+		{84931D47-488C-4D34-90CE-7FAA0435DC56}.Release|x64.ActiveCfg = Release|x64
+		{84931D47-488C-4D34-90CE-7FAA0435DC56}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
