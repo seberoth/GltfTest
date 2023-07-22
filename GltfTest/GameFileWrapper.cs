@@ -11,12 +11,15 @@ public class GameFileWrapper
     protected readonly IArchiveManager _archiveManager;
     protected readonly CR2WFile _file;
 
+    public string? FileName { get; set; }
     public CResource Resource { get; }
 
     public GameFileWrapper(CR2WFile file, IArchiveManager archiveManager)
     {
         _archiveManager = archiveManager;
         _file = file;
+
+        FileName = _file.MetaData.FileName;
         Resource = (CResource)_file.RootChunk;
     }
 
@@ -24,27 +27,34 @@ public class GameFileWrapper
     {
         _archiveManager = archiveManager;
         _file = file;
+
+        FileName = _file.MetaData.FileName;
         Resource = resource;
     }
 
-    public GameFileWrapper? GetResource(ResourcePath resourcePath)
+    public GameFileWrapper? GetResource(IRedRef redRef) => GetResource(redRef.DepotPath, redRef.Flags);
+
+    public GameFileWrapper? GetResource(ResourcePath depotPath, InternalEnums.EImportFlags flags)
     {
-        if (resourcePath == ResourcePath.Empty)
+        if (depotPath == ResourcePath.Empty)
         {
             return null;
         }
 
-        foreach (var embeddedFile in _file.EmbeddedFiles)
+        if (flags == InternalEnums.EImportFlags.Embedded)
         {
-            if (embeddedFile.FileName == resourcePath)
+            foreach (var embeddedFile in _file.EmbeddedFiles)
             {
-                return new GameFileWrapper(_file, (CResource)embeddedFile.Content, _archiveManager);
+                if (embeddedFile.FileName == depotPath)
+                {
+                    return new GameFileWrapper(_file, (CResource)embeddedFile.Content, _archiveManager);
+                }
             }
         }
 
         foreach (var fileEntry in _archiveManager.GetFiles())
         {
-            if (fileEntry.Key == resourcePath)
+            if (fileEntry.Key == depotPath)
             {
                 using var ms = new MemoryStream();
                 fileEntry.Extract(ms);

@@ -1,27 +1,28 @@
 ﻿using SharpGLTF.Schema2;
 using System.Text.Json;
+using WolvenKit.RED4.Types;
 
 namespace GltfTest.Extras;
 
-internal class ScalarInfo : ExtraProperties
+internal class ScalarParameter : ExtraProperties
 {
     private Single _min;
     private Single _max;
     private Single _scalar;
 
-    public float Min
+    public Single Min
     {
         get => _min;
         set => _min = value;
     }
 
-    public float Max
+    public Single Max
     {
         get => _max;
         set => _max = value;
     }
 
-    public float Scalar
+    public Single Scalar
     {
         get => _scalar;
         set => _scalar = value;
@@ -45,4 +46,12 @@ internal class ScalarInfo : ExtraProperties
             default: base.DeserializeProperty(jsonPropertyName, ref reader); break;
         }
     }
+
+    public static explicit operator ScalarParameter(CMaterialParameterScalar parameter) => 
+        new()
+        {
+            Min = parameter.Min, 
+            Max = parameter.Max, 
+            Scalar = parameter.Scalar
+        };
 }

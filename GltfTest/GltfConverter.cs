@@ -56,129 +56,27 @@ public partial class GltfConverter
             if (!dict.ContainsKey(materialNameStr))
             {
                 var gMaterial = _modelRoot.CreateMaterial(materialNameStr);
-                var cpMaterial = gMaterial.UseExtension<MaterialCyberpunk>();
+                var cpMaterial = gMaterial.UseExtension<MaterialInstance>();
 
                 var material = mesh.MaterialEntries.First(x => x.Name == materialName);
                 if (material.IsLocalInstance)
                 {
-                    var tmp = mesh.LocalMaterialBuffer.Materials[material.Index];
-                    if (tmp is CMaterialInstance materialInstance)
+                    var tmp = mesh.PreloadLocalMaterialInstances[material.Index];
+                    if (tmp!.Chunk is CMaterialInstance materialInstance)
                     {
-                        var parameters = GetMaterialParameters(materialInstance);
+                        var parameters = MaterialParameterDictionary.Create(_file, materialInstance);
+                        parameters.Assign(cpMaterial);
 
-                        if (parameters.TryGetValue<IRedRef>("Albedo", out var val1))
+                        foreach (var key in cpMaterial.Parameters.Keys)
                         {
-                            cpMaterial.Albedo = GetImage(val1);
-                        }
-
-                        if (parameters.TryGetValue<CMaterialParameterTexture>("SecondaryAlbedo", out var val2))
-                        {
-                            cpMaterial.Albedo = GetImage(val2.Texture);
-                        }
-
-                        if (parameters.TryGetValue<CMaterialParameterScalar>("SecondaryAlbedoInfluence", out var val3))
-                        {
-                            cpMaterial.SecondaryAlbedoInfluence = new ScalarInfo() { Min = val3.Min, Max = val3.Max, Scalar = val3.Scalar };
-                        }
-
-                        if (parameters.TryGetValue<CMaterialParameterScalar>("SecondaryAlbedoTintColorInfluence", out var val4))
-                        {
-                            cpMaterial.SecondaryAlbedoTintColorInfluence = new ScalarInfo() { Min = val4.Min, Max = val4.Max, Scalar = val4.Scalar };
-                        }
-
-                        if (parameters.TryGetValue<IRedRef>("Normal", out var val5))
-                        {
-                            cpMaterial.Normal = GetImage(val5);
-                        }
-
-                        if (parameters.TryGetValue<IRedRef>("DetailNormal", out var val6))
-                        {
-                            cpMaterial.DetailNormal = GetImage(val6);
-                        }
-
-                        if (parameters.TryGetValue<IRedRef>("Roughness", out var val7))
-                        {
-                            cpMaterial.Roughness = GetImage(val7);
-                        }
-
-                        if (parameters.TryGetValue<CFloat>("DetailRoughnessBiasMin", out var val8))
-                        {
-                            cpMaterial.DetailRoughnessBiasMin = val8;
-                        }
-
-                        if (parameters.TryGetValue<CFloat>("DetailRoughnessBiasMax", out var val9))
-                        {
-                            cpMaterial.DetailRoughnessBiasMax = val9;
-                        }
-
-                        /*if (parameters.ContainsKey("DiffuseTexture"))
-                        {
-                            gMaterial.InitializePBRSpecularGlossiness();
-
-                            
-
-                            var channel = gMaterial.FindChannel("Diffuse");
-                            if (channel is { } materialChannel)
+                            if (cpMaterial.Parameters[key] is { Type: "Texture" } parameter)
                             {
-                                if (parameters.TryGetValue("DiffuseTexture", out var diffuseTextureObj) && diffuseTextureObj is IRedRef diffuseTexture)
+                                cpMaterial.Parameters[key].Value = new TextureParameter(gMaterial)
                                 {
-                                    var image = GetImage(diffuseTexture);
-                                    if (image != null)
-                                    {
-                                        materialChannel.SetTexture(0, image);
-                                    }
-                                }
-
-                                if (parameters.TryGetValue("DiffuseColor", out var diffuseColorObj) && diffuseColorObj is CColor diffuseColor)
-                                {
-                                    materialChannel.Color = new Vector4(diffuseColor.Red, diffuseColor.Green, diffuseColor.Blue, diffuseColor.Alpha);
-                                }
+                                    Image = GetImage(parameters, key)
+                                };
                             }
                         }
-
-                        if (parameters.ContainsKey("Roughness"))
-                        {
-                            gMaterial.InitializePBRMetallicRoughness();
-
-                            var channel1 = gMaterial.FindChannel("BaseColor");
-                            if (channel1 is { } materialChannel1)
-                            {
-                                if (parameters.TryGetValue("Albedo", out var roughnessObj) && roughnessObj is IRedRef roughness)
-                                {
-                                    var image = GetImage(roughness);
-                                    if (image != null)
-                                    {
-                                        materialChannel1.SetTexture(0, image);
-                                    }
-                                }
-                            }
-
-                            var channel2 = gMaterial.FindChannel("MetallicRoughness");
-                            if (channel2 is { } materialChannel2)
-                            {
-                                if (parameters.TryGetValue("Roughness", out var roughnessObj) && roughnessObj is IRedRef roughness)
-                                {
-                                    var image = GetImage(roughness);
-                                    if (image != null)
-                                    {
-                                        materialChannel2.SetTexture(0, image);
-                                    }
-                                }
-                            }
-                        }
-
-                        var channel3 = gMaterial.FindChannel("Normal");
-                        if (channel3 is { } materialChannel3)
-                        {
-                            if (parameters.TryGetValue("Normal", out var roughnessObj) && roughnessObj is IRedRef roughness)
-                            {
-                                var image = GetImage(roughness);
-                                if (image != null)
-                                {
-                                    materialChannel3.SetTexture(0, image);
-                                }
-                            }
-                        }*/
                     }
                 }
 
@@ -191,64 +89,31 @@ public partial class GltfConverter
         return result;
     }
 
-    private Image? GetImage(IRedRef resourceReference)
+    private Image? GetImage(MaterialParameterDictionary materials, string key)
     {
-        var xbm = _file.GetResource(resourceReference.DepotPath);
-        if (xbm == null)
+        var parameter = materials.Parameters[key] as CMaterialParameterTexture;
+        if (parameter == null)
         {
             return null;
         }
 
-        var redImage = RedImage.FromXBM((CBitmapTexture)xbm.Resource);
+        if (!materials.Resources.TryGetValue(parameter.Texture.DepotPath, out var resource))
+        {
+            resource = _file.GetResource(parameter.Texture.DepotPath, parameter.Texture.Flags)?.Resource;
+        }
+
+        if (resource == null)
+        {
+            return null;
+        }
+
+        var redImage = RedImage.FromXBM((CBitmapTexture)resource);
         redImage.FlipV();
 
         var image = _modelRoot.CreateImage();
         image.Content = redImage.SaveToPNGMemory();
 
         return image;
-    }
-
-    
-
-    private MaterialParameterDictionary GetMaterialParameters(IMaterial src)
-    {
-        if (src is CMaterialTemplate materialTemplate)
-        {
-            var result = new MaterialParameterDictionary();
-            foreach (var parameterHandle in materialTemplate.Parameters[2])
-            {
-                if (parameterHandle.Chunk is not { } materialParameter)
-                {
-                    continue;
-                }
-
-                result.Add(materialParameter.ParameterName, materialParameter);
-            }
-            return result;
-        }
-
-        if (src is CMaterialInstance materialInstance)
-        {
-            var file = _file.GetResource(materialInstance.BaseMaterial.DepotPath);
-            if (file == null)
-            {
-                return new MaterialParameterDictionary();
-            }
-
-            var result = GetMaterialParameters((IMaterial)file.Resource);
-            foreach (var pair in materialInstance.Values)
-            {
-                if (!result.ContainsKey(pair.Key))
-                {
-                    throw new NotSupportedException();
-                }
-
-                result[pair.Key] = pair.Value;
-            }
-            return result;
-        }
-
-        throw new NotImplementedException();
     }
 
     private (Skin skin, List<Node> bones) ExtractSkeleton(CMesh mesh, rendRenderMeshBlob rendRenderMeshBlob)
