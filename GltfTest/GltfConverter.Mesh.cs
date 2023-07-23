@@ -1,4 +1,6 @@
-﻿using SharpGLTF.Schema2;
+﻿using GltfTest.Extras;
+using SharpDX.Win32;
+using SharpGLTF.Schema2;
 using WolvenKit.RED4.Types;
 
 namespace GltfTest;
@@ -14,6 +16,32 @@ public partial class GltfConverter
 
         var materials = ExtractMaterials(cMesh);
 
+        var variantList = new List<VariantsRootEntry>();
+        foreach (var appearanceHandle in cMesh.Appearances)
+        {
+            if (appearanceHandle.Chunk == null)
+            {
+                continue;
+            }
+
+            var entry = new VariantsRootEntry { Name = appearanceHandle.Chunk.Name.GetResolvedText()! };
+            foreach (var chunkMaterial in appearanceHandle.Chunk.ChunkMaterials)
+            {
+                entry.Materials.Add(chunkMaterial.GetResolvedText()!);
+            }
+            variantList.Add(entry);
+        }
+
+        if (variantList.Count == 0)
+        {
+            throw new Exception();
+        }
+
+        if (cMesh.Appearances.Count > 1)
+        {
+            _modelRoot.UseExtension<VariantsRootExtension>().Variants = variantList;
+        }
+
         if (cMesh.BoneNames.Count > 0)
         {
             _skeleton = _modelRoot.CreateLogicalNode();
@@ -23,7 +51,7 @@ public partial class GltfConverter
             var (skin, bones) = ExtractSkeleton(cMesh, rendBlob);
         }
 
-        var meshes = ExtractMeshes(rendBlob, materials);
+        var meshes = ExtractMeshes(rendBlob, variantList, materials);
 
         _modelRoot.MergeBuffers();
 

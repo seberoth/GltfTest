@@ -10,7 +10,7 @@ public partial class GltfConverter
         if (morphTargetMesh.Blob.Chunk is rendRenderMorphTargetMeshBlob rendRenderMorphTargetMeshBlob &&
             rendRenderMorphTargetMeshBlob.BaseBlob.Chunk is rendRenderMeshBlob rendBlob)
         {
-            ExtractMeshes(rendBlob);
+            //ExtractMeshes(rendBlob);
         }
 
         _modelRoot.MergeBuffers();

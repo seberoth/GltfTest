@@ -11,7 +11,6 @@ using WolvenKit.RED4.Archive.IO;
 using WolvenKit.RED4.CR2W;
 using WolvenKit.RED4.CR2W.Archive;
 using WolvenKit.RED4.Types;
-using static System.Net.Mime.MediaTypeNames;
 using static WolvenKit.RED4.Types.Enums;
 using EFileReadErrorCodes = WolvenKit.RED4.Archive.IO.EFileReadErrorCodes;
 
@@ -28,13 +27,13 @@ namespace GltfTest
         {
             Init(@"C:\Games\Steam\steamapps\common\Cyberpunk 2077\bin\x64\Cyberpunk2077.exe");
 
-            var cr2w = GetFile("base\\environment\\decoration\\unique\\side_quest\\sq021\\bbpod_a.mesh");
+            var cr2w = GetFile(@"base\characters\common\hair\hh_090_wa__alt\hh_090_wa__alt_player.mesh");
             if (cr2w == null)
             {
                 return;
             }
 
-            var test2 = new GltfConverter(cr2w, _archiveManager);
+            var test2 = new GltfConverter(cr2w, _archiveManager, @"C:\Users\Marcel\AppData\Roaming\REDModding\WolvenKit\Depot");
             test2.SaveGLB(@$"C:\Dev\Debug_new.glb", new WriteSettings { Validation = ValidationMode.Strict });
         }
 
@@ -46,6 +45,9 @@ namespace GltfTest
             _archiveManager = new ArchiveManager(_hashService, _parserService, _loggerService);
             _archiveManager.LoadGameArchives(new FileInfo(gamePath), false);
             
+            ExtensionsFactory.RegisterExtension<ModelRoot, VariantsRootExtension>("KHR_materials_variants");
+            ExtensionsFactory.RegisterExtension<MeshPrimitive, VariantsPrimitiveExtension>("KHR_materials_variants");
+
             ExtensionsFactory.RegisterExtension<Material, MaterialInstance>("CP_MaterialInstance");
         }
 

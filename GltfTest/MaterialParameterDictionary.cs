@@ -11,7 +11,7 @@ public class MaterialParameterDictionary : ExtraProperties
     public string? BaseTemplate { get; set; }
 
     public Dictionary<string, CMaterialParameter> Parameters = new();
-    public Dictionary<ResourcePath, CResource> Resources = new();
+    public Dictionary<ResourcePath, GameFileWrapper> Resources = new();
 
     public void Add(CArray<CHandle<CMaterialParameter>> parameters)
     {
@@ -53,8 +53,14 @@ public class MaterialParameterDictionary : ExtraProperties
                 }
 
                 Parameters.Add(materialParameter.ParameterName.GetResolvedText()!, materialParameter);
-
-                ExtractResources(gameFile, materialParameter);
+            }
+            foreach (var (path, flags) in gameFile.GetImports())
+            {
+                var embFile = gameFile.GetResource(path, flags);
+                if (embFile != null)
+                {
+                    Resources[path] = embFile;
+                }
             }
         }
 
@@ -63,7 +69,6 @@ public class MaterialParameterDictionary : ExtraProperties
             var file = gameFile.GetResource(instance.BaseMaterial);
             if (file != null)
             {
-                file.FileName = instance.BaseMaterial.DepotPath.GetResolvedText();
                 Add(file);
             }
 
@@ -77,77 +82,14 @@ public class MaterialParameterDictionary : ExtraProperties
                 }
 
                 Update(key, pair.Value);
-                ExtractResources(gameFile, Parameters[key]);
             }
-        }
-    }
-
-    private void ExtractResources(GameFileWrapper gameFile, CMaterialParameter materialParameter)
-    {
-        IRedRef? resourceReference = null;
-
-        if (materialParameter is CMaterialParameterCube cube)
-        {
-            resourceReference = cube.Texture;
-        }
-
-        if (materialParameter is CMaterialParameterDynamicTexture dynamicTexture)
-        {
-            resourceReference = dynamicTexture.Texture;
-        }
-
-        if (materialParameter is CMaterialParameterFoliageParameters foliageParameters)
-        {
-            resourceReference = foliageParameters.FoliageProfile;
-        }
-
-        if (materialParameter is CMaterialParameterGradient gradient)
-        {
-            resourceReference = gradient.Gradient;
-        }
-
-        if (materialParameter is CMaterialParameterHairParameters hairParameters)
-        {
-            resourceReference = hairParameters.HairProfile;
-        }
-
-        if (materialParameter is CMaterialParameterMultilayerMask multilayerMask)
-        {
-            resourceReference = multilayerMask.Mask;
-        }
-
-        if (materialParameter is CMaterialParameterMultilayerSetup multilayerSetup)
-        {
-            resourceReference = multilayerSetup.Setup;
-        }
-
-        if (materialParameter is CMaterialParameterSkinParameters skinParameters)
-        {
-            resourceReference = skinParameters.SkinProfile;
-        }
-
-        if (materialParameter is CMaterialParameterTerrainSetup terrainSetup)
-        {
-            resourceReference = terrainSetup.Setup;
-        }
-
-        if (materialParameter is CMaterialParameterTexture texture)
-        {
-            resourceReference = texture.Texture;
-        }
-
-        if (materialParameter is CMaterialParameterTextureArray textureArray)
-        {
-            resourceReference = textureArray.Texture;
-        }
-
-        if (resourceReference != null)
-        {
-            var embFile = gameFile.GetResource(resourceReference);
-            if (embFile != null)
+            foreach (var (path, flags) in gameFile.GetImports())
             {
-                embFile.FileName = resourceReference.DepotPath.GetResolvedText();
-                Resources[resourceReference.DepotPath] = embFile.Resource;
+                var embFile = gameFile.GetResource(path, flags);
+                if (embFile != null)
+                {
+                    Resources[path] = embFile;
+                }
             }
         }
     }
@@ -222,6 +164,18 @@ public class MaterialParameterDictionary : ExtraProperties
             }
 
             vector.Vector = val;
+
+            return;
+        }
+
+        if (Parameters[key] is CMaterialParameterHairParameters hairParameters)
+        {
+            if (value is not IRedRef val)
+            {
+                throw new Exception();
+            }
+
+            hairParameters.HairProfile = new CResourceReference<CHairProfile>(val.DepotPath, val.Flags);
 
             return;
         }

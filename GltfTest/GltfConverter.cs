@@ -1,34 +1,32 @@
 ﻿using SharpGLTF.Schema2;
-using SharpGLTF.Validation;
 using WolvenKit.RED4.Archive.CR2W;
 using WolvenKit.RED4.Types;
 using static WolvenKit.RED4.Types.Enums;
 using System.Numerics;
-using SharpGLTF.Transforms;
+using GltfTest.Extras;
 using Vector2 = System.Numerics.Vector2;
-using Vector3 = System.Numerics.Vector3;
 using Vector4 = System.Numerics.Vector4;
 using SharpGLTF.Memory;
-using Quaternion = System.Numerics.Quaternion;
 using WolvenKit.Common;
-using WolvenKit.RED4.CR2W;
-using GltfTest.Extras;
+using DynamicData;
+using SharpDX.Win32;
 
 namespace GltfTest;
 
 public partial class GltfConverter
 {
     private readonly IArchiveManager _archiveManager;
-
     private readonly GameFileWrapper _file;
+    private readonly string _depotPath;
 
     private ModelRoot _modelRoot = ModelRoot.CreateModel();
     private Node? _skeleton;
 
-    public GltfConverter(CR2WFile file, IArchiveManager archiveManager)
+    public GltfConverter(CR2WFile file, IArchiveManager archiveManager, string depotPath)
     {
         _archiveManager = archiveManager;
         _file = new GameFileWrapper(file, _archiveManager);
+        _depotPath = depotPath;
     }
 
     public void SaveGLB(string filePath, WriteSettings? settings = null)
@@ -44,76 +42,6 @@ public partial class GltfConverter
             var model = ToGltf(morphTargetMesh);
             model!.SaveGLB(filePath, settings);
         }
-    }
-
-    private List<Material> ExtractMaterials(CMesh mesh)
-    {
-        var result = new List<Material>();
-        var dict = new Dictionary<string, Material>();
-        foreach (var materialName in mesh.Appearances[0].Chunk!.ChunkMaterials)
-        {
-            var materialNameStr = materialName.GetResolvedText()!;
-            if (!dict.ContainsKey(materialNameStr))
-            {
-                var gMaterial = _modelRoot.CreateMaterial(materialNameStr);
-                var cpMaterial = gMaterial.UseExtension<MaterialInstance>();
-
-                var material = mesh.MaterialEntries.First(x => x.Name == materialName);
-                if (material.IsLocalInstance)
-                {
-                    var tmp = mesh.PreloadLocalMaterialInstances[material.Index];
-                    if (tmp!.Chunk is CMaterialInstance materialInstance)
-                    {
-                        var parameters = MaterialParameterDictionary.Create(_file, materialInstance);
-                        parameters.Assign(cpMaterial);
-
-                        foreach (var key in cpMaterial.Parameters.Keys)
-                        {
-                            if (cpMaterial.Parameters[key] is { Type: "Texture" } parameter)
-                            {
-                                cpMaterial.Parameters[key].Value = new TextureParameter(gMaterial)
-                                {
-                                    Image = GetImage(parameters, key)
-                                };
-                            }
-                        }
-                    }
-                }
-
-                dict.Add(materialNameStr, gMaterial);
-            }
-
-            result.Add(dict[materialNameStr]);
-        }
-
-        return result;
-    }
-
-    private Image? GetImage(MaterialParameterDictionary materials, string key)
-    {
-        var parameter = materials.Parameters[key] as CMaterialParameterTexture;
-        if (parameter == null)
-        {
-            return null;
-        }
-
-        if (!materials.Resources.TryGetValue(parameter.Texture.DepotPath, out var resource))
-        {
-            resource = _file.GetResource(parameter.Texture.DepotPath, parameter.Texture.Flags)?.Resource;
-        }
-
-        if (resource == null)
-        {
-            return null;
-        }
-
-        var redImage = RedImage.FromXBM((CBitmapTexture)resource);
-        redImage.FlipV();
-
-        var image = _modelRoot.CreateImage();
-        image.Content = redImage.SaveToPNGMemory();
-
-        return image;
     }
 
     private (Skin skin, List<Node> bones) ExtractSkeleton(CMesh mesh, rendRenderMeshBlob rendRenderMeshBlob)
@@ -840,7 +768,7 @@ public partial class GltfConverter
         public byte[] GetArray() => _stream.ToArray();
     }
 
-    private Dictionary<byte, Node> ExtractMeshes(rendRenderMeshBlob rendMeshBlob, IList<Material>? materials = null)
+    private Dictionary<byte, Node> ExtractMeshes(rendRenderMeshBlob rendMeshBlob, List<VariantsRootEntry> variants, Dictionary<string, Material> materials)
     {
         var ms = new MemoryStream(rendMeshBlob.RenderBuffer.Buffer.GetBytes());
         var bufferReader = new BinaryReader(ms);
@@ -860,9 +788,26 @@ public partial class GltfConverter
             }
             var mesh = node.Mesh;
             var primitive = mesh.CreatePrimitive();
-            if (materials != null)
+
+            primitive.Material = materials[variants[0].Materials[i]];
+            if (variants.Count > 1)
             {
-                primitive.Material = materials[i];
+                var variantList = primitive.UseExtension<VariantsPrimitiveExtension>();
+
+                var tmpDict = new Dictionary<int, VariantsPrimitiveEntry>();
+                for (int j = 0; j < variants.Count; j++)
+                {
+                    var material = materials[variants[j].Materials[i]];
+
+                    if (!tmpDict.ContainsKey(material.LogicalIndex))
+                    {
+                        var variant = new VariantsPrimitiveEntry { Material = material.LogicalIndex };
+                        
+                        variantList.Mappings.Add(variant);
+                        tmpDict.Add(material.LogicalIndex, variant);
+                    }
+                    tmpDict[material.LogicalIndex].Variants.Add(j);
+                }
             }
 
             using var ms1 = new MemoryStream();
