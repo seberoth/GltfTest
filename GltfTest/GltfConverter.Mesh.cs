@@ -14,6 +14,9 @@ public partial class GltfConverter
             return null;
         }
 
+        _modelRoot.UseScene(0).Name = "Scene";
+        _modelRoot.DefaultScene = _modelRoot.UseScene(0);
+
         var materials = ExtractMaterials(cMesh);
 
         var variantList = new List<VariantsRootEntry>();
@@ -44,7 +47,7 @@ public partial class GltfConverter
 
         if (cMesh.BoneNames.Count > 0)
         {
-            _skeleton = _modelRoot.CreateLogicalNode();
+            _skeleton = _modelRoot.UseScene(0).CreateNode();
             _skeleton.Name = "Skeleton";
             //_skeleton.LocalTransform = new AffineTransform(new Quaternion(0F, -0.7071067F, 0F, 0.7071068F));
 

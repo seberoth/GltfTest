@@ -780,7 +780,7 @@ public partial class GltfConverter
 
             if (!result.TryGetValue(renderChunkInfo.LodMask, out var node))
             {
-                node = _skeleton != null ? _skeleton.CreateNode() : _modelRoot.CreateLogicalNode();
+                node = _skeleton != null ? _skeleton.CreateNode() : _modelRoot.UseScene(0).CreateNode();
                 node.Name = $"Mesh_lod{renderChunkInfo.LodMask}";
                 node.Mesh = _modelRoot.CreateMesh();
 
