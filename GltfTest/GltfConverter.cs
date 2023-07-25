@@ -697,14 +697,14 @@ public partial class GltfConverter
                             if (DstFormat.Dimensions == DimensionType.VEC3)
                             {
                                 _writer.Write(vertex.X);
-                                _writer.Write(vertex.Y);
                                 _writer.Write(vertex.Z);
+                                _writer.Write(-vertex.Y);
                             }
                             else if (DstFormat.Dimensions == DimensionType.VEC4)
                             {
                                 _writer.Write(vertex.X);
-                                _writer.Write(vertex.Y);
                                 _writer.Write(vertex.Z);
+                                _writer.Write(-vertex.Y);
                                 _writer.Write(vertex.W);
                             }
                             else
