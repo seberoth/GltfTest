@@ -1,19 +1,18 @@
 ﻿using GltfTest.Extras;
 using SharpGLTF.Schema2;
 using WolvenKit.Common.Conversion;
-using WolvenKit.Core.Extensions;
 using WolvenKit.Modkit.RED4;
-using WolvenKit.RED4.Archive;
 using WolvenKit.RED4.Archive.CR2W;
 using WolvenKit.RED4.CR2W;
 using WolvenKit.RED4.CR2W.JSON;
 using WolvenKit.RED4.Types;
-using WolvenKit.RED4.Types.Exceptions;
 
 namespace GltfTest;
 
 public partial class GltfConverter
 {
+    private const bool EmbeddedImages = false;
+
     private Dictionary<string, Material> ExtractMaterials(CMesh mesh)
     {
         var result = new Dictionary<string, Material>();
@@ -68,14 +67,17 @@ public partial class GltfConverter
                 var parameters = MaterialParameterDictionary.Create(tmp2 ?? _file, materialInstance);
                 parameters.Assign(cpMaterial);
 
-                foreach (var key in cpMaterial.Parameters.Keys)
+                if (EmbeddedImages)
                 {
-                    if (cpMaterial.Parameters[key] is { Type: "Texture" } parameter)
+                    foreach (var key in cpMaterial.Parameters.Keys)
                     {
-                        cpMaterial.Parameters[key].Value = new TextureParameter(gMaterial)
+                        if (cpMaterial.Parameters[key] is { Type: "Texture" } parameter)
                         {
-                            Image = GetImage(parameters, key)
-                        };
+                            cpMaterial.Parameters[key].Value = new TextureParameter(gMaterial)
+                            {
+                                Image = GetImage(parameters, key)
+                            };
+                        }
                     }
                 }
 
@@ -89,11 +91,6 @@ public partial class GltfConverter
         }
 
         return result;
-    }
-
-    private void ExtractMaterial()
-    {
-
     }
 
     private Image? GetImage(MaterialParameterDictionary materials, string key)
