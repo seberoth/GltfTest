@@ -2,6 +2,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using SharpDX.Direct3D11;
+using SharpGLTF.IO;
 
 namespace GltfTest;
 
@@ -45,5 +46,19 @@ internal static class Extensions
         var n = new Vector3(tangent.X, tangent.Y, tangent.Z).SanitizeNormal();
         var s = float.IsNaN(tangent.W) ? 1 : tangent.W;
         return new Vector4(n, s > 0 ? 1 : -1);
+    }
+
+    internal static bool TryGetValue<T>(this JsonContent content, [NotNullWhen(true)] out T? value, params IConvertible[] path) where T : IConvertible
+    {
+        try
+        {
+            value = content.GetValue<T>(path);
+            return true;
+        }
+        catch (Exception)
+        {
+            value = default;
+            return false;
+        }
     }
 }

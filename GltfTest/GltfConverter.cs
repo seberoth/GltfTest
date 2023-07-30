@@ -4,12 +4,11 @@ using WolvenKit.RED4.Types;
 using static WolvenKit.RED4.Types.Enums;
 using System.Numerics;
 using GltfTest.Extras;
+using SharpGLTF.IO;
 using Vector2 = System.Numerics.Vector2;
 using Vector4 = System.Numerics.Vector4;
 using SharpGLTF.Memory;
 using WolvenKit.Common;
-using DynamicData;
-using SharpDX.Win32;
 
 namespace GltfTest;
 
@@ -47,6 +46,7 @@ public partial class GltfConverter
     private (Skin skin, List<Node> bones) ExtractSkeleton(CMesh mesh, rendRenderMeshBlob rendRenderMeshBlob)
     {
         var skin = _modelRoot.CreateSkin("Skeleton");
+        skin.Skeleton = _skeleton!;
 
         var bones = new List<Node>();
         for (int i = 0; i < mesh.BoneNames.Count; i++)
@@ -60,6 +60,8 @@ public partial class GltfConverter
 
             // Maybe RotX?
             boneNode.WorldMatrix = RotY(YUp(inverseBoneRig));
+
+            boneNode.Extras = JsonContent.Serialize(new { Epsilon = (float)mesh.BoneVertexEpsilons[i], Lod = (byte)mesh.LodBoneMask[i] });
 
             bones.Add(boneNode);
         }

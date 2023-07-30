@@ -91,7 +91,7 @@ public class MaterialParameter : ExtraProperties
                         break;
 
                     case "Texture":
-                        _value = DeserializePropertyValue<TextureParameter>(ref reader);
+                        _value = DeserializePropertyValue<ResourceReferenceParameter>(ref reader);
                         break;
 
                     case "TextureArray":

@@ -18,6 +18,9 @@ namespace GltfTest
 {
     internal class Program
     {
+        private const bool Export = false;
+        private const bool Import = true;
+
         private static ILoggerService _loggerService = null!;
         private static IHashService _hashService = null!;
         private static Red4ParserService _parserService = null!;
@@ -27,23 +30,36 @@ namespace GltfTest
         {
             Init(@"C:\Games\Steam\steamapps\common\Cyberpunk 2077\bin\x64\Cyberpunk2077.exe");
 
-            var cr2w = GetFile(@"base\characters\common\hair\hh_090_wa__alt\hh_090_wa__alt_player.mesh");
-            if (cr2w == null)
+            if (Export)
             {
-                return;
+                var cr2w = GetFile(@"base\characters\common\hair\hh_090_wa__alt\hh_090_wa__alt_player.mesh");
+                if (cr2w == null)
+                {
+                    return;
+                }
+
+                var test2 = new GltfConverter(cr2w, _archiveManager, @"C:\Users\Marcel\AppData\Roaming\REDModding\WolvenKit\Depot");
+                test2.SaveGLB(@$"C:\Dev\Debug_new.glb", new WriteSettings { Validation = ValidationMode.Strict });
             }
 
-            var test2 = new GltfConverter(cr2w, _archiveManager, @"C:\Users\Marcel\AppData\Roaming\REDModding\WolvenKit\Depot");
-            test2.SaveGLB(@$"C:\Dev\Debug_new.glb", new WriteSettings { Validation = ValidationMode.Strict });
+            if (Import)
+            {
+                var test3 = new GltfImporter(@$"C:\Dev\Debug_new.glb");
+                test3.ToMesh();
+            }
         }
 
         private static void Init(string gamePath)
         {
             _loggerService = new Logger();
-            _hashService = new HashService();
-            _parserService = new Red4ParserService(_hashService, _loggerService);
-            _archiveManager = new ArchiveManager(_hashService, _parserService, _loggerService);
-            _archiveManager.LoadGameArchives(new FileInfo(gamePath), false);
+            
+            if (Export)
+            {
+                _hashService = new HashService();
+                _parserService = new Red4ParserService(_hashService, _loggerService);
+                _archiveManager = new ArchiveManager(_hashService, _parserService, _loggerService);
+                _archiveManager.LoadGameArchives(new FileInfo(gamePath), false);
+            }
             
             ExtensionsFactory.RegisterExtension<ModelRoot, VariantsRootExtension>("KHR_materials_variants");
             ExtensionsFactory.RegisterExtension<MeshPrimitive, VariantsPrimitiveExtension>("KHR_materials_variants");
