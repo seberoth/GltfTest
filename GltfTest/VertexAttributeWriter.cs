@@ -83,4 +83,12 @@ public class VertexAttributeWriter : BinaryWriter
         Write((Byte)(vector.Z * Byte.MaxValue));
         Write((Byte)(vector.W * Byte.MaxValue));
     }
+
+    public void WriteFloat4(Vector3 vector)
+    {
+        Write(vector.X);
+        Write(vector.Y);
+        Write(vector.Z);
+        Write(1F);
+    }
 }

@@ -18,7 +18,7 @@ namespace GltfTest
 {
     internal class Program
     {
-        private const bool Export = false;
+        private const bool Export = true;
         private const bool Import = true;
 
         private static ILoggerService _loggerService = null!;
@@ -34,7 +34,7 @@ namespace GltfTest
 
             if (Export)
             {
-                var cr2w = GetFile(@"base\characters\head\player_base_heads\player_female_average\h0_002_pwa_a__young_096\h0_002_pwa_a__young_096.mesh");
+                var cr2w = GetFile(@"base\characters\garment\player_equipment\torso\t2_002_vest__puffy\t2_002_pwa_vest__puffy.mesh");
                 if (cr2w == null)
                 {
                     return;
@@ -49,7 +49,7 @@ namespace GltfTest
                 var test3 = new GltfImporter(@$"C:\Dev\Debug_new.glb");
                 var mesh = test3.ToMesh();
 
-                using var fs = File.Open(@$"C:\Dev\Debug_new.mesh", FileMode.OpenOrCreate, FileAccess.Write);
+                using var fs = File.Open(@$"C:\Dev\t2_002_pwa_vest__puffy.mesh", FileMode.OpenOrCreate, FileAccess.Write);
                 using var cw = new CR2WWriter(fs);
 
                 cw.WriteFile(new CR2WFile
