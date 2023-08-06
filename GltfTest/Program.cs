@@ -47,7 +47,15 @@ namespace GltfTest
             if (Import)
             {
                 var test3 = new GltfImporter(@$"C:\Dev\Debug_new.glb");
-                test3.ToMesh();
+                var mesh = test3.ToMesh();
+
+                using var fs = File.Open(@$"C:\Dev\Debug_new.mesh", FileMode.OpenOrCreate, FileAccess.Write);
+                using var cw = new CR2WWriter(fs);
+
+                cw.WriteFile(new CR2WFile
+                {
+                    RootChunk = mesh
+                });
             }
         }
 

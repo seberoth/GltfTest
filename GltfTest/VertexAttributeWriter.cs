@@ -15,15 +15,15 @@ public class VertexAttributeWriter : BinaryWriter
         Write((Int16)(vector.X * Int16.MaxValue));
         Write((Int16)(vector.Y * Int16.MaxValue));
         Write((Int16)(vector.Z * Int16.MaxValue));
-        Write((Int16)0);
+        Write(Int16.MaxValue);
     }
 
     public void WriteUByte4(Vector4 vector)
     {
-        Write((Byte)(vector.X * Byte.MaxValue));
-        Write((Byte)(vector.Y * Byte.MaxValue));
-        Write((Byte)(vector.Z * Byte.MaxValue));
-        Write((Byte)(vector.W * Byte.MaxValue));
+        Write((Byte)vector.X);
+        Write((Byte)vector.Y);
+        Write((Byte)vector.Z);
+        Write((Byte)vector.W);
     }
 
     public void WriteUByte4N(Vector4 vector)

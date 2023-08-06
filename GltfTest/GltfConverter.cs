@@ -243,8 +243,8 @@ public partial class GltfConverter
                     }
                     break;
                 case GpuWrapApiVertexPackingePackingUsage.PS_LightBlockerIntensity:
-                    ElementType = ElementType.Todo;
-                    AttributeKey = $"???";
+                    ElementType = ElementType.Main;
+                    AttributeKey = "_LIGHTBLOCKERINTENSITY";
 
                     DstFormat = new(DimensionType.SCALAR, EncodingType.FLOAT, false);
                     break;

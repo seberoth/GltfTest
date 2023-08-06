@@ -24,7 +24,7 @@ public class GltfImporter
         _modelRoot = ModelRoot.Load(filePath, new ReadSettings { Validation = ValidationMode.Strict });
     }
 
-    public void ToMesh()
+    public CMesh ToMesh()
     {
         _mesh.RenderResourceBlob = _blob;
 
@@ -133,12 +133,12 @@ public class GltfImporter
                 foreach (var position in positions)
                 {
                     min.X = MathF.Min(min.X, position.X);
-                    min.Y = MathF.Min(min.Y, position.Y);
-                    min.Z = MathF.Min(min.Z, position.Z);
+                    min.Y = MathF.Min(min.Y, -position.Z);
+                    min.Z = MathF.Min(min.Z, position.Y);
 
                     max.X = MathF.Max(max.X, position.X);
-                    max.Y = MathF.Max(max.Y, position.Y);
-                    max.Z = MathF.Max(max.Z, position.Z);
+                    max.Y = MathF.Max(max.Y, -position.Z);
+                    max.Z = MathF.Max(max.Z, position.Y);
                 }
             }
         }
@@ -161,19 +161,36 @@ public class GltfImporter
             }
         };
 
-        _blob.Header.QuantizationScale = new WolvenKit.RED4.Types.Vector4
-        {
-            X = (max.X - min.X) / 2,
-            Y = (max.Y - min.Y) / 2,
-            Z = (max.Z - min.Z) / 2,
-            W = 0
-        };
+        //_blob.Header.QuantizationOffset = new WolvenKit.RED4.Types.Vector4
+        //{
+        //    X = (max.X + min.X) / 2,
+        //    Y = (max.Y + min.Y) / 2,
+        //    Z = (max.Z + min.Z) / 2,
+        //    W = 0
+        //};
+        //
+        //_blob.Header.QuantizationScale = new WolvenKit.RED4.Types.Vector4
+        //{
+        //    X = (max.X - min.X) / 2,
+        //    Y = (max.Y - min.Y) / 2,
+        //    Z = (max.Z - min.Z) / 2,
+        //    W = 0
+        //};
 
         _blob.Header.QuantizationOffset = new WolvenKit.RED4.Types.Vector4
         {
-            X = (max.X + min.X) / 2,
-            Y = (max.Y + min.Y) / 2,
-            Z = (max.Z + min.Z) / 2
+            X = 2.23517418E-08F,
+            Y = -0.0215086341F,
+            Z = 1.64609957F,
+            W = 1
+        };
+        
+        _blob.Header.QuantizationScale = new WolvenKit.RED4.Types.Vector4
+        {
+            X = 0.108865805F,
+            Y = 0.129111201F,
+            Z = 0.184419572F,
+            W = 0
         };
 
         foreach (var logicalNode in _modelRoot.LogicalNodes)
@@ -189,6 +206,15 @@ public class GltfImporter
             }
             else if (logicalNode.Mesh != null)
             {
+                if (!logicalNode.Name.StartsWith("Mesh_lod"))
+                {
+                    throw new Exception();
+                }
+                var lod = byte.Parse(logicalNode.Name[8..]);
+
+                _blob.Header.RenderLODs.Add(0);
+                _mesh.LodLevelInfo.Add(0);
+
                 foreach (var primitive in logicalNode.Mesh.Primitives)
                 {
                     var variant = primitive.GetExtension<VariantsPrimitiveExtension>();
@@ -204,7 +230,8 @@ public class GltfImporter
                         }
                     }
 
-                    AddPrimitive(primitive, vd);
+                    var rendChunk = AddPrimitive(primitive, vd);
+                    rendChunk.LodMask = lod;
 
                     _blob.Header.Topology.Add(new rendTopologyData());
                 }
@@ -246,6 +273,10 @@ public class GltfImporter
         _blob.Header.IndexBufferSize = (CUInt32)vd.BaseStream.Position - _blob.Header.IndexBufferOffset;
         _blob.Header.DataProcessing = 1;
         _blob.Header.Version = 20;
+
+        _blob.RenderBuffer = new DataBuffer(ms.ToArray());
+
+        return _mesh;
     }
 
     private void AddBone(Node logicalNode)
@@ -319,11 +350,11 @@ public class GltfImporter
         }
     }
 
-    private void AddPrimitive(MeshPrimitive primitive, VertexAttributeWriter vertexAttributeWriter)
+    private rendChunk AddPrimitive(MeshPrimitive primitive, VertexAttributeWriter vertexAttributeWriter)
     {
         var renderChunkInfo = new rendChunk
         {
-            RenderMask = EMeshChunkFlags.MCF_RenderInScene | EMeshChunkFlags.MCF_RenderInShadows
+            RenderMask = EMeshChunkFlags.MCF_RenderInScene | EMeshChunkFlags.MCF_RenderInShadows,
         };
 
         var vertexCount = primitive.VertexAccessors["POSITION"].Count;
@@ -368,14 +399,14 @@ public class GltfImporter
         renderChunkInfo.ChunkVertices.VertexLayout.SlotMask = (uint)slotMask;
         renderChunkInfo.ChunkVertices.ByteOffsets = new CStatic<CUInt32>(5);
 
-        var padding = vertexAttributeWriter.BaseStream.Position % 16;
-        if (padding > 0)
-        {
-            vertexAttributeWriter.Write(new byte[padding]);
-        }
-
         for (int i = 0; i < 5; i++)
         {
+            var padding = vertexAttributeWriter.BaseStream.Position % 16;
+            if (padding > 0)
+            {
+                vertexAttributeWriter.Write(new byte[padding]);
+            }
+
             var elements = layoutData.Where(x => x.ElementInfo.StreamIndex == i).ToList();
             if (elements.Count == 0)
             {
@@ -394,7 +425,7 @@ public class GltfImporter
                         break;
                     }
 
-                    attributeInfo.WriteElement(vertexAttributeWriter, i, _blob);
+                    attributeInfo.WriteElement(vertexAttributeWriter, j, _blob);
                 }
             }
         }
@@ -410,6 +441,8 @@ public class GltfImporter
         #endregion VertexFactory
 
         _blob.Header.RenderChunkInfos.Add(renderChunkInfo);
+
+        return renderChunkInfo;
     }
 
     private EMaterialVertexFactory GetVertexFactory(List<GpuWrapApiVertexPackingPackingElement> elements)
@@ -535,7 +568,14 @@ public class GltfImporter
                 case GpuWrapApiVertexPackingePackingType.PT_Invalid:
                     throw new Exception();
                 case GpuWrapApiVertexPackingePackingType.PT_Float1:
+                {
+                    if (DataArray[index] is float scalar)
+                    {
+                        writer.Write(scalar);
+                        return;
+                    }
                     throw new Exception();
+                }
                 case GpuWrapApiVertexPackingePackingType.PT_Float2:
                     throw new Exception();
                 case GpuWrapApiVertexPackingePackingType.PT_Float3:
@@ -686,9 +726,14 @@ public class GltfImporter
                     StreamIndex = streamIndex,
                     StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
                 },
-                DataArray = vertexAccessors["POSITION"].AsVector3Array().Cast<object>().ToList(),
+                DataArray = new List<object>(),
                 TargetSize = 8
             });
+
+            foreach (var vector in vertexAccessors["POSITION"].AsVector3Array())
+            {
+                list[^1].DataArray.Add(new Vector3(vector.X, -vector.Z, vector.Y));
+            }
 
             groupUsed = true;
         }
@@ -823,9 +868,14 @@ public class GltfImporter
                     StreamIndex = streamIndex,
                     StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
                 },
-                DataArray = vertexAccessors["NORMAL"].AsVector3Array().Cast<object>().ToList(),
-                TargetSize = 1
+                DataArray = new List<object>(),
+                TargetSize = 4
             });
+
+            foreach (var vector in vertexAccessors["NORMAL"].AsVector3Array())
+            {
+                list[^1].DataArray.Add(new Vector3(vector.X, -vector.Z, vector.Y));
+            }
 
             groupUsed = true;
         }
@@ -842,9 +892,14 @@ public class GltfImporter
                     StreamIndex = streamIndex,
                     StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
                 },
-                DataArray = vertexAccessors["TANGENT"].AsVector4Array().Cast<object>().ToList(),
-                TargetSize = 1
+                DataArray = new List<object>(),
+                TargetSize = 4
             });
+
+            foreach (var vector in vertexAccessors["TANGENT"].AsVector4Array())
+            {
+                list[^1].DataArray.Add(new Vector4(vector.X, -vector.Z, vector.Y, vector.W));
+            }
 
             groupUsed = true;
         }
@@ -924,7 +979,7 @@ public class GltfImporter
                     StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
                 },
                 DataArray = morphTargets["GarmentSupport"]["POSITION"].AsVector3Array().Cast<object>().ToList(),
-                TargetSize = 16
+                TargetSize = 8
             });
 
             groupUsed = true;
@@ -1037,9 +1092,22 @@ public class GltfImporter
             groupUsed = true;
         }
 
-        // TODO
-        if (vertexAccessors.ContainsKey("LightBlockerIntensity"))
+        if (vertexAccessors.ContainsKey("_LIGHTBLOCKERINTENSITY"))
         {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_Float1,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_LightBlockerIntensity,
+                    UsageIndex = 0,
+                    StreamIndex = streamIndex,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = vertexAccessors["_LIGHTBLOCKERINTENSITY"].AsScalarArray().Cast<object>().ToList(),
+                TargetSize = 4
+            });
+
             groupUsed = true;
         }
 
