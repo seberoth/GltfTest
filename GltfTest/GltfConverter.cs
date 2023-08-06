@@ -350,8 +350,8 @@ public partial class GltfConverter
                 case GpuWrapApiVertexPackingePackingType.PT_Float16_2:
                     Vertices.Add(new Vector2
                     {
-                        X = (float)BitConverter.ToHalf(reader.ReadBytes(2)),
-                        Y = (float)BitConverter.ToHalf(reader.ReadBytes(2))
+                        X = (float)reader.ReadHalf(),
+                        Y = (float)reader.ReadHalf()
                     });
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Dec4:
@@ -419,10 +419,10 @@ public partial class GltfConverter
                 case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
                     Vertices.Add(new Vector4
                     {
-                        X = (float)BitConverter.ToHalf(reader.ReadBytes(2)),
-                        Y = (float)BitConverter.ToHalf(reader.ReadBytes(2)),
-                        Z = (float)BitConverter.ToHalf(reader.ReadBytes(2)),
-                        W = (float)BitConverter.ToHalf(reader.ReadBytes(2)),
+                        X = (float)reader.ReadHalf(),
+                        Y = (float)reader.ReadHalf(),
+                        Z = (float)reader.ReadHalf(),
+                        W = (float)reader.ReadHalf(),
                     });
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_UInt1:
@@ -775,6 +775,8 @@ public partial class GltfConverter
         var ms = new MemoryStream(rendMeshBlob.RenderBuffer.Buffer.GetBytes());
         var bufferReader = new BinaryReader(ms);
 
+        var globalMorphTargets = new Dictionary<string, List<string>>();
+
         var result = new Dictionary<byte, Node>();
         for (var i = 0; i < rendMeshBlob.Header.RenderChunkInfos.Count; i++)
         {
@@ -788,6 +790,13 @@ public partial class GltfConverter
 
                 result.Add(renderChunkInfo.LodMask, node);
             }
+
+            if (!globalMorphTargets.TryGetValue(node.Name, out var morphTargets))
+            {
+                morphTargets = new List<string>();
+                globalMorphTargets.Add(node.Name, morphTargets);
+            }
+
             var mesh = node.Mesh;
             var primitive = mesh.CreatePrimitive();
 
@@ -910,18 +919,32 @@ public partial class GltfConverter
                     }
                 }
 
-                var morphTargetIdx = 0;
                 if (garmentDict.Count > 0)
                 {
-                    primitive.SetMorphTargetAccessors(morphTargetIdx++, garmentDict);
+                    var morphTargetIdx = morphTargets.IndexOf("GarmentSupport");
+                    if (morphTargetIdx == -1)
+                    {
+                        morphTargets.Add("GarmentSupport");
+                        morphTargetIdx = morphTargets.Count - 1;
+                    }
+
+                    primitive.SetMorphTargetAccessors(morphTargetIdx, garmentDict);
                 }
 
                 if (vehicleDict.Count > 0)
                 {
-                    primitive.SetMorphTargetAccessors(morphTargetIdx++, vehicleDict);
+                    var morphTargetIdx = morphTargets.IndexOf("VehicleDamageSupport");
+                    if (morphTargetIdx == -1)
+                    {
+                        morphTargets.Add("VehicleDamageSupport");
+                        morphTargetIdx = morphTargets.Count - 1;
+                    }
+
+                    primitive.SetMorphTargetAccessors(morphTargetIdx, vehicleDict);
                 }
             }
 
+            var oldPos = bufferReader.BaseStream.Position;
             bufferReader.BaseStream.Position = rendMeshBlob.Header.IndexBufferOffset + renderChunkInfo.ChunkIndices.TeOffset;
             for (var j = 0; j < renderChunkInfo.NumIndices; j+=3)
             {
@@ -943,12 +966,19 @@ public partial class GltfConverter
                 }
             }
 
+            bufferReader.BaseStream.Position = oldPos;
+
             var buffer1 = ms1.ToArray();
 
             var acc1 = _modelRoot.CreateAccessor();
             var buff1 = _modelRoot.UseBufferView(buffer1, 0, buffer1.Length, 0, BufferMode.ELEMENT_ARRAY_BUFFER);
             acc1.SetIndexData(buff1, 0, (int)(uint)renderChunkInfo.NumIndices, IndexEncodingType.UNSIGNED_SHORT);
             primitive.SetIndexAccessor(acc1);
+        }
+
+        foreach (var (_, node) in result)
+        {
+            node.Mesh.Extras = JsonContent.Serialize(new { targetNames = globalMorphTargets[node.Name].ToArray() });
         }
 
         return result;

@@ -1,9 +1,15 @@
-﻿using GltfTest.Extras;
+﻿using DynamicData.Tests;
+using GltfTest.Extras;
+using SharpDX.DXGI;
 using SharpGLTF.Schema2;
 using SharpGLTF.Validation;
 using System.Numerics;
+using SharpGLTF.IO;
 using WolvenKit.RED4.Types;
-using Vector4 = WolvenKit.RED4.Types.Vector4;
+using static WolvenKit.RED4.Types.Enums;
+using Vector2 = System.Numerics.Vector2;
+using Vector3 = System.Numerics.Vector3;
+using Vector4 = System.Numerics.Vector4;
 
 namespace GltfTest;
 
@@ -20,6 +26,8 @@ public class GltfImporter
 
     public void ToMesh()
     {
+        _mesh.RenderResourceBlob = _blob;
+
         var variants = _modelRoot.GetExtension<VariantsRootExtension>();
         if (variants != null)
         {
@@ -63,6 +71,18 @@ public class GltfImporter
                                 mi.Values.Add(new CKeyValuePair(name, new CResourceReference<CHairProfile>(resourceReference.ResourcePath)));
                                 continue;
 
+                            case "SkinParameters":
+                                mi.Values.Add(new CKeyValuePair(name, new CResourceReference<CSkinProfile>(resourceReference.ResourcePath)));
+                                continue;
+
+                            case "MultilayerMask":
+                                mi.Values.Add(new CKeyValuePair(name, new CResourceReference<Multilayer_Mask>(resourceReference.ResourcePath)));
+                                continue;
+
+                            case "MultilayerSetup":
+                                mi.Values.Add(new CKeyValuePair(name, new CResourceReference<Multilayer_Setup>(resourceReference.ResourcePath)));
+                                continue;
+
                             default:
                                 break;
                         }
@@ -82,7 +102,12 @@ public class GltfImporter
 
                     if (parameter.Value is VectorParameter vector)
                     {
-                        mi.Values.Add(new CKeyValuePair(name, new Vector4 { X = vector.X, Y = vector.Y, Z = vector.Z, W = vector.W }));
+                        mi.Values.Add(new CKeyValuePair(name, new WolvenKit.RED4.Types.Vector4 { X = vector.X, Y = vector.Y, Z = vector.Z, W = vector.W }));
+                        continue;
+                    }
+
+                    if (parameter.Value is StructBufferParameter structBuffer)
+                    {
                         continue;
                     }
 
@@ -92,6 +117,64 @@ public class GltfImporter
                 _mesh.LocalMaterialBuffer.Materials.Add(mi);
             }
         }
+
+        using var ms = new MemoryStream();
+        using var vd = new VertexAttributeWriter(ms);
+
+        var min = new Vector3(Single.MaxValue, Single.MaxValue, Single.MaxValue);
+        var max = new Vector3(Single.MinValue, Single.MinValue, Single.MinValue);
+
+        foreach (var mesh in _modelRoot.LogicalMeshes)
+        {
+            foreach (var primitive in mesh.Primitives)
+            {
+                var positions = primitive.GetVertexAccessor("POSITION").AsVector3Array();
+
+                foreach (var position in positions)
+                {
+                    min.X = MathF.Min(min.X, position.X);
+                    min.Y = MathF.Min(min.Y, position.Y);
+                    min.Z = MathF.Min(min.Z, position.Z);
+
+                    max.X = MathF.Max(max.X, position.X);
+                    max.Y = MathF.Max(max.Y, position.Y);
+                    max.Z = MathF.Max(max.Z, position.Z);
+                }
+            }
+        }
+
+        _mesh.BoundingBox = new Box
+        {
+            Min = new WolvenKit.RED4.Types.Vector4
+            {
+                X = min.X,
+                Y = min.Y,
+                Z = min.Z,
+                W = 1F
+            },
+            Max = new WolvenKit.RED4.Types.Vector4
+            {
+                X = max.X,
+                Y = max.Y,
+                Z = max.Z,
+                W = 1F
+            }
+        };
+
+        _blob.Header.QuantizationScale = new WolvenKit.RED4.Types.Vector4
+        {
+            X = (max.X - min.X) / 2,
+            Y = (max.Y - min.Y) / 2,
+            Z = (max.Z - min.Z) / 2,
+            W = 0
+        };
+
+        _blob.Header.QuantizationOffset = new WolvenKit.RED4.Types.Vector4
+        {
+            X = (max.X + min.X) / 2,
+            Y = (max.Y + min.Y) / 2,
+            Z = (max.Z + min.Z) / 2
+        };
 
         foreach (var logicalNode in _modelRoot.LogicalNodes)
         {
@@ -121,7 +204,9 @@ public class GltfImporter
                         }
                     }
 
+                    AddPrimitive(primitive, vd);
 
+                    _blob.Header.Topology.Add(new rendTopologyData());
                 }
             }
             else
@@ -129,6 +214,38 @@ public class GltfImporter
                 
             }
         }
+
+        _blob.Header.VertexBufferSize = (CUInt32)vd.BaseStream.Position;
+        _blob.Header.IndexBufferOffset = (CUInt32)vd.BaseStream.Position;
+
+        var index = 0;
+        foreach (var mesh in _modelRoot.LogicalMeshes)
+        {
+            foreach (var primitive in mesh.Primitives)
+            {
+                var indices = primitive.GetIndices();
+
+                var renderChunkInfo = _blob.Header.RenderChunkInfos[index];
+
+                renderChunkInfo.ChunkIndices.Pe = GpuWrapApieIndexBufferChunkType.IBCT_IndexUShort;
+                renderChunkInfo.ChunkIndices.TeOffset = (CUInt32)(vd.BaseStream.Position - _blob.Header.IndexBufferOffset);
+
+                renderChunkInfo.NumIndices = (uint)indices.Count;
+
+                for (int j = 0; j < indices.Count; j += 3)
+                {
+                    vd.Write((UInt16)indices[j + 2]);
+                    vd.Write((UInt16)indices[j + 1]);
+                    vd.Write((UInt16)indices[j + 0]);
+                }
+
+                index++;
+            }
+        }
+
+        _blob.Header.IndexBufferSize = (CUInt32)vd.BaseStream.Position - _blob.Header.IndexBufferOffset;
+        _blob.Header.DataProcessing = 1;
+        _blob.Header.Version = 20;
     }
 
     private void AddBone(Node logicalNode)
@@ -139,7 +256,7 @@ public class GltfImporter
         _mesh.BoneNames.Add(logicalNode.Name);
         _mesh.BoneRigMatrices.Add(inverseBoneRig);
 
-        _blob.Header.BonePositions.Add(new Vector4
+        _blob.Header.BonePositions.Add(new WolvenKit.RED4.Types.Vector4
         {
             X = logicalNode.LocalTransform.Translation.X,
             Y = -logicalNode.LocalTransform.Translation.Z,
@@ -188,5 +305,755 @@ public class GltfImporter
             M43 = src.M42,
             M44 = 1
         };
+    }
+
+    private List<string>? GetTargetNames(JsonContent extras)
+    {
+        try
+        {
+            return extras.GetNode("targetNames").Deserialize<List<string>>();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private void AddPrimitive(MeshPrimitive primitive, VertexAttributeWriter vertexAttributeWriter)
+    {
+        var renderChunkInfo = new rendChunk
+        {
+            RenderMask = EMeshChunkFlags.MCF_RenderInScene | EMeshChunkFlags.MCF_RenderInShadows
+        };
+
+        var vertexCount = primitive.VertexAccessors["POSITION"].Count;
+        if (vertexCount >= ushort.MaxValue)
+        {
+            throw new Exception();
+        }
+        renderChunkInfo.NumVertices = (CUInt16)vertexCount;
+
+        var morphTargets = new Dictionary<string, IReadOnlyDictionary<string, Accessor>>();
+        var targetNames = GetTargetNames(primitive.LogicalParent.Extras);
+        for (int i = 0; i < primitive.MorphTargetsCount; i++)
+        {
+            var name = targetNames != null ? targetNames[i] : $"target_{i}";
+            morphTargets.Add(name, primitive.GetMorphTargetAccessors(i));
+        }
+
+        var layoutData = GetLayoutData(primitive.VertexAccessors, morphTargets);
+
+        renderChunkInfo.ChunkVertices.VertexLayout.Elements = new CStatic<GpuWrapApiVertexPackingPackingElement>(32);
+        renderChunkInfo.ChunkVertices.VertexLayout.SlotStrides = new CStatic<CUInt8>(8);
+        for (var j = 0; j < 8; j++)
+        {
+            renderChunkInfo.ChunkVertices.VertexLayout.SlotStrides.Add(0);
+        }
+
+        foreach (var attributeInfo in layoutData)
+        {
+            renderChunkInfo.ChunkVertices.VertexLayout.Elements.Add(attributeInfo.ElementInfo);
+            renderChunkInfo.ChunkVertices.VertexLayout.SlotStrides[attributeInfo.ElementInfo.StreamIndex] += attributeInfo.TargetSize;
+            renderChunkInfo.ChunkVertices.VertexLayout.Hash = 0;
+        }
+
+        var slotMask = 0;
+        for (var j = 0; j < renderChunkInfo.ChunkVertices.VertexLayout.SlotStrides.Count; j++)
+        {
+            if (renderChunkInfo.ChunkVertices.VertexLayout.SlotStrides[j] > 0)
+            {
+                slotMask |= (1 << j);
+            }
+        }
+        renderChunkInfo.ChunkVertices.VertexLayout.SlotMask = (uint)slotMask;
+        renderChunkInfo.ChunkVertices.ByteOffsets = new CStatic<CUInt32>(5);
+
+        var padding = vertexAttributeWriter.BaseStream.Position % 16;
+        if (padding > 0)
+        {
+            vertexAttributeWriter.Write(new byte[padding]);
+        }
+
+        for (int i = 0; i < 5; i++)
+        {
+            var elements = layoutData.Where(x => x.ElementInfo.StreamIndex == i).ToList();
+            if (elements.Count == 0)
+            {
+                renderChunkInfo.ChunkVertices.ByteOffsets.Add(0);
+                continue;
+            }
+
+            renderChunkInfo.ChunkVertices.ByteOffsets.Add((CUInt32)vertexAttributeWriter.BaseStream.Position);
+
+            for (int j = 0; j < renderChunkInfo.NumVertices; j++)
+            {
+                foreach (var attributeInfo in elements)
+                {
+                    if (attributeInfo.ElementInfo.StreamType == GpuWrapApiVertexPackingEStreamType.ST_Invalid)
+                    {
+                        break;
+                    }
+
+                    attributeInfo.WriteElement(vertexAttributeWriter, i, _blob);
+                }
+            }
+        }
+
+        #region VertexFactory
+
+        var tmpElements = renderChunkInfo.ChunkVertices.VertexLayout.Elements
+            .Where(x => x.StreamType == GpuWrapApiVertexPackingEStreamType.ST_PerVertex)
+            .ToList();
+
+        renderChunkInfo.VertexFactory = (byte)GetVertexFactory(tmpElements);
+
+        #endregion VertexFactory
+
+        _blob.Header.RenderChunkInfos.Add(renderChunkInfo);
+    }
+
+    private EMaterialVertexFactory GetVertexFactory(List<GpuWrapApiVertexPackingPackingElement> elements)
+    {
+        // TODO: MVF_MeshProcedural, MVF_MeshProxy, MVF_MeshWindowProxy
+
+        if (elements.Count == 1 && elements[0].Usage == GpuWrapApiVertexPackingePackingUsage.PS_Position)
+        {
+            return EMaterialVertexFactory.MVF_Terrain;
+        }
+
+        var isSkinnedSingleBone = elements.Any(x => x.Usage == GpuWrapApiVertexPackingePackingUsage.PS_BoneIndex);
+        if (isSkinnedSingleBone)
+        {
+            return EMaterialVertexFactory.MVF_MeshSkinnedSingleBone;
+        }
+
+        var isSpeedTree = elements.Any(x => x.Usage == GpuWrapApiVertexPackingePackingUsage.PS_ExtraData && x.UsageIndex == 2);
+        if (isSpeedTree)
+        {
+            return EMaterialVertexFactory.MVF_MeshSpeedTree;
+        }
+
+        var isSkinned = elements.Any(x => x.Usage == GpuWrapApiVertexPackingePackingUsage.PS_SkinIndices);
+        var isDestruction = elements.Any(x => x.Usage == GpuWrapApiVertexPackingePackingUsage.PS_DestructionIndices);
+        if (isDestruction)
+        {
+            if (isSkinned)
+            {
+                return EMaterialVertexFactory.MVF_MeshDestructibleSkinned;
+            }
+            else
+            {
+                return EMaterialVertexFactory.MVF_MeshDestructible;
+            }
+        }
+
+        var isVehicle = elements.Any(x => x.Usage == GpuWrapApiVertexPackingePackingUsage.PS_VehicleDmgPosition);
+        var isSkinnedExt = elements.Any(x => x.Usage == GpuWrapApiVertexPackingePackingUsage.PS_SkinIndices && x.UsageIndex == 1);
+        var isGarment = elements.Any(x => x.Usage == GpuWrapApiVertexPackingePackingUsage.PS_ExtraData && x.Type == GpuWrapApiVertexPackingePackingType.PT_Float16_4);
+        var isLightBlocker = elements.Any(x => x.Usage == GpuWrapApiVertexPackingePackingUsage.PS_LightBlockerIntensity);
+
+        if (isVehicle)
+        {
+            if (isSkinned)
+            {
+                return EMaterialVertexFactory.MVF_MeshSkinnedVehicle;
+            }
+
+            return EMaterialVertexFactory.MVF_MeshStaticVehicle;
+        }
+        else
+        {
+            if (isLightBlocker)
+            {
+                if (isGarment)
+                {
+                    if (isSkinnedExt)
+                    {
+                        return EMaterialVertexFactory.MVF_GarmentMeshExtSkinnedLightBlockers;
+                    }
+
+                    if (isSkinned)
+                    {
+                        return EMaterialVertexFactory.MVF_GarmentMeshSkinnedLightBlockers;
+                    }
+                }
+                else
+                {
+                    if (isSkinnedExt)
+                    {
+                        return EMaterialVertexFactory.MVF_MeshExtSkinnedLightBlockers;
+                    }
+
+                    if (isSkinned)
+                    {
+                        return EMaterialVertexFactory.MVF_MeshSkinnedLightBlockers;
+                    }
+                }
+            }
+            else
+            {
+                if (isGarment)
+                {
+                    if (isSkinnedExt)
+                    {
+                        return EMaterialVertexFactory.MVF_GarmentMeshExtSkinned;
+                    }
+
+                    if (isSkinned)
+                    {
+                        return EMaterialVertexFactory.MVF_GarmentMeshSkinned;
+                    }
+                }
+                else
+                {
+                    if (isSkinnedExt)
+                    {
+                        return EMaterialVertexFactory.MVF_MeshExtSkinned;
+                    }
+
+                    if (isSkinned)
+                    {
+                        return EMaterialVertexFactory.MVF_MeshSkinned;
+                    }
+                }
+            }
+        }
+
+        return EMaterialVertexFactory.MVF_MeshStatic;
+    }
+
+    private class AttributeInfo
+    {
+        public GpuWrapApiVertexPackingPackingElement ElementInfo { get; set; }
+        public IList<object> DataArray { get; set; }
+        public byte TargetSize { get; set; }
+
+        public void WriteElement(VertexAttributeWriter writer, int index, rendRenderMeshBlob rendRenderMeshBlob)
+        {
+            switch ((GpuWrapApiVertexPackingePackingType)ElementInfo.Type)
+            {
+                case GpuWrapApiVertexPackingePackingType.PT_Invalid:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Float1:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Float2:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Float3:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Float4:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Float16_2:
+                {
+                    if (DataArray[index] is Vector2 vector2)
+                    {
+                        writer.WriteFloat16_2(vector2);
+                        return;
+                    }
+                    throw new Exception();
+                }
+                case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
+                {
+                    if (DataArray[index] is Vector3 vector3)
+                    {
+                        writer.WriteFloat16_4(vector3);
+                        return;
+                    }
+                    throw new Exception();
+                }
+                case GpuWrapApiVertexPackingePackingType.PT_UShort1:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_UShort2:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_UShort4:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_UShort4N:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Short1:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Short2:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Short4:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Short4N:
+                {
+                    if (DataArray[index] is Vector3 vector3)
+                    {
+                        if (ElementInfo.Usage == GpuWrapApiVertexPackingePackingUsage.PS_Position)
+                        {
+                            vector3.X = (vector3.X - rendRenderMeshBlob.Header.QuantizationOffset.X) / rendRenderMeshBlob.Header.QuantizationScale.X;
+                            vector3.Y = (vector3.Y - rendRenderMeshBlob.Header.QuantizationOffset.Y) / rendRenderMeshBlob.Header.QuantizationScale.Y;
+                            vector3.Z = (vector3.Z - rendRenderMeshBlob.Header.QuantizationOffset.Z) / rendRenderMeshBlob.Header.QuantizationScale.Z;
+                        }
+
+                        writer.WriteShort4N(vector3);
+                        return;
+                    }
+                    throw new Exception();
+                }
+                case GpuWrapApiVertexPackingePackingType.PT_UInt1:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_UInt2:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_UInt3:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_UInt4:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Int1:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Int2:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Int3:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Int4:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Color:
+                {
+                    if (DataArray[index] is Vector4 vector4)
+                    {
+                        writer.WriteColor(vector4);
+                        return;
+                    }
+                    throw new Exception();
+                }
+                case GpuWrapApiVertexPackingePackingType.PT_UByte1:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_UByte1F:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_UByte4:
+                {
+                    if (DataArray[index] is Vector4 vector4)
+                    {
+                        writer.WriteUByte4(vector4);
+                        return;
+                    }
+                    throw new Exception();
+                }
+                case GpuWrapApiVertexPackingePackingType.PT_UByte4N:
+                {
+                    if (DataArray[index] is Vector4 vector4)
+                    {
+                        writer.WriteUByte4N(vector4);
+                        return;
+                    }
+                    throw new Exception();
+                }
+                case GpuWrapApiVertexPackingePackingType.PT_Byte4N:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Dec4:
+                {
+                    if (DataArray[index] is Vector3 vector3)
+                    {
+                        writer.WriteDec4(vector3);
+                        return;
+                    }
+
+                    if (DataArray[index] is Vector4 vector4)
+                    {
+                        writer.WriteDec4(vector4);
+                        return;
+                    }
+                    throw new Exception();
+                }
+                case GpuWrapApiVertexPackingePackingType.PT_Index16:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Index32:
+                    throw new Exception();
+                case GpuWrapApiVertexPackingePackingType.PT_Max:
+                    throw new Exception();
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+    }
+
+    private List<AttributeInfo> GetLayoutData(IReadOnlyDictionary<string, Accessor> vertexAccessors, Dictionary<string, IReadOnlyDictionary<string, Accessor>> morphTargets)
+    {
+        var list = new List<AttributeInfo>();
+
+        byte streamIndex = 0;
+        var hasSkin = false;
+        var groupUsed = false;
+
+        if (vertexAccessors.ContainsKey("POSITION"))
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_Short4N,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_Position,
+                    UsageIndex = 0,
+                    StreamIndex = streamIndex,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = vertexAccessors["POSITION"].AsVector3Array().Cast<object>().ToList(),
+                TargetSize = 8
+            });
+
+            groupUsed = true;
+        }
+
+        // TODO
+        if (vertexAccessors.ContainsKey("BoneIndex"))
+        {
+            hasSkin = true;
+            groupUsed = true;
+        }
+
+        if (vertexAccessors.ContainsKey("JOINTS_0"))
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_UByte4,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_SkinIndices,
+                    UsageIndex = 0,
+                    StreamIndex = streamIndex,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = vertexAccessors["JOINTS_0"].AsVector4Array().Cast<object>().ToList(),
+                TargetSize = 4
+            });
+
+            hasSkin = true;
+            groupUsed = true;
+        }
+
+        if (vertexAccessors.ContainsKey("JOINTS_1"))
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_UByte4,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_SkinIndices,
+                    UsageIndex = 1,
+                    StreamIndex = streamIndex,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = vertexAccessors["JOINTS_1"].AsVector4Array().Cast<object>().ToList(),
+                TargetSize = 4
+            });
+
+            hasSkin = true;
+            groupUsed = true;
+        }
+
+        if (vertexAccessors.ContainsKey("WEIGHTS_0"))
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_UByte4N,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_SkinWeights,
+                    UsageIndex = 0,
+                    StreamIndex = streamIndex,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = vertexAccessors["WEIGHTS_0"].AsVector4Array().Cast<object>().ToList(),
+                TargetSize = 4
+            });
+
+            hasSkin = true;
+            groupUsed = true;
+        }
+
+        if (vertexAccessors.ContainsKey("WEIGHTS_1"))
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_UByte4N,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_SkinWeights,
+                    UsageIndex = 1,
+                    StreamIndex = streamIndex,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = vertexAccessors["WEIGHTS_1"].AsVector4Array().Cast<object>().ToList(),
+                TargetSize = 4
+            });
+
+            hasSkin = true;
+            groupUsed = true;
+        }
+
+        if (groupUsed)
+        {
+            streamIndex++;
+            groupUsed = false;
+        }
+
+        if (vertexAccessors.ContainsKey("TEXCOORD_0"))
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_Float16_2,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_TexCoord,
+                    UsageIndex = 0,
+                    StreamIndex = streamIndex,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = vertexAccessors["TEXCOORD_0"].AsVector2Array().Cast<object>().ToList(),
+                TargetSize = 4
+            });
+
+            groupUsed = true;
+        }
+
+        if (groupUsed)
+        {
+            streamIndex++;
+            groupUsed = false;
+        }
+
+        if (vertexAccessors.ContainsKey("NORMAL"))
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_Dec4,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_Normal,
+                    UsageIndex = 0,
+                    StreamIndex = streamIndex,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = vertexAccessors["NORMAL"].AsVector3Array().Cast<object>().ToList(),
+                TargetSize = 1
+            });
+
+            groupUsed = true;
+        }
+
+        if (vertexAccessors.ContainsKey("TANGENT"))
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_Dec4,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_Tangent,
+                    UsageIndex = 0,
+                    StreamIndex = streamIndex,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = vertexAccessors["TANGENT"].AsVector4Array().Cast<object>().ToList(),
+                TargetSize = 1
+            });
+
+            groupUsed = true;
+        }
+
+        if (groupUsed)
+        {
+            streamIndex++;
+            groupUsed = false;
+        }
+
+        if (vertexAccessors.ContainsKey("COLOR_0"))
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_Color,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_Color,
+                    UsageIndex = 0,
+                    StreamIndex = streamIndex,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = vertexAccessors["COLOR_0"].AsVector4Array().Cast<object>().ToList(),
+                TargetSize = 4
+            });
+
+            groupUsed = true;
+        }
+
+        if (vertexAccessors.ContainsKey("TEXCOORD_1"))
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_Float16_2,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_TexCoord,
+                    UsageIndex = 1,
+                    StreamIndex = streamIndex,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = vertexAccessors["TEXCOORD_1"].AsVector2Array().Cast<object>().ToList(),
+                TargetSize = 4
+            });
+
+            groupUsed = true;
+        }
+
+        if (groupUsed)
+        {
+            streamIndex++;
+            groupUsed = false;
+        }
+
+        // TODO
+        if (vertexAccessors.ContainsKey("DestructionIndices"))
+        {
+            groupUsed = true;
+        }
+
+        // TODO
+        if (vertexAccessors.ContainsKey("MultilayerPaint"))
+        {
+            groupUsed = true;
+        }
+
+        if (morphTargets.ContainsKey("GarmentSupport"))
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_Float16_4,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_ExtraData,
+                    UsageIndex = 0,
+                    StreamIndex = 0,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
+                },
+                DataArray = morphTargets["GarmentSupport"]["POSITION"].AsVector3Array().Cast<object>().ToList(),
+                TargetSize = 16
+            });
+
+            groupUsed = true;
+        }
+
+        // TODO
+        if (vertexAccessors.ContainsKey("ExtraData_0"))
+        {
+            groupUsed = true;
+        }
+
+        // TODO
+        if (vertexAccessors.ContainsKey("ExtraData_1"))
+        {
+            groupUsed = true;
+        }
+
+        // TODO
+        if (vertexAccessors.ContainsKey("ExtraData_2"))
+        {
+            groupUsed = true;
+        }
+
+        if (groupUsed)
+        {
+            groupUsed = false;
+        }
+
+        list.Add(new AttributeInfo
+        {
+            ElementInfo = new GpuWrapApiVertexPackingPackingElement
+            {
+                Type = GpuWrapApiVertexPackingePackingType.PT_Float4,
+                Usage = GpuWrapApiVertexPackingePackingUsage.PS_InstanceTransform,
+                UsageIndex = 0,
+                StreamIndex = 7,
+                StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerInstance
+            },
+            TargetSize = 16
+        });
+
+        list.Add(new AttributeInfo
+        {
+            ElementInfo = new GpuWrapApiVertexPackingPackingElement
+            {
+                Type = GpuWrapApiVertexPackingePackingType.PT_Float4,
+                Usage = GpuWrapApiVertexPackingePackingUsage.PS_InstanceTransform,
+                UsageIndex = 1,
+                StreamIndex = 7,
+                StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerInstance
+            },
+            TargetSize = 16
+        });
+
+        list.Add(new AttributeInfo
+        {
+            ElementInfo = new GpuWrapApiVertexPackingPackingElement
+            {
+                Type = GpuWrapApiVertexPackingePackingType.PT_Float4,
+                Usage = GpuWrapApiVertexPackingePackingUsage.PS_InstanceTransform,
+                UsageIndex = 2,
+                StreamIndex = 7,
+                StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerInstance
+            },
+            TargetSize = 16
+        });
+
+        if (hasSkin)
+        {
+            list.Add(new AttributeInfo
+            {
+                ElementInfo = new GpuWrapApiVertexPackingPackingElement
+                {
+                    Type = GpuWrapApiVertexPackingePackingType.PT_UInt4,
+                    Usage = GpuWrapApiVertexPackingePackingUsage.PS_InstanceSkinningData,
+                    UsageIndex = 0,
+                    StreamIndex = 7,
+                    StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerInstance
+                },
+                TargetSize = 16
+            });
+        }
+
+        if (groupUsed)
+        {
+            groupUsed = false;
+        }
+
+        // TODO
+        if (vertexAccessors.ContainsKey("VehicleDmgNormal_0"))
+        {
+            groupUsed = true;
+        }
+
+        // TODO
+        if (vertexAccessors.ContainsKey("VehicleDmgNormal_1"))
+        {
+            groupUsed = true;
+        }
+
+        // TODO
+        if (vertexAccessors.ContainsKey("VehicleDmgPosition_0"))
+        {
+            groupUsed = true;
+        }
+
+        // TODO
+        if (vertexAccessors.ContainsKey("VehicleDmgPosition_1"))
+        {
+            groupUsed = true;
+        }
+
+        // TODO
+        if (vertexAccessors.ContainsKey("LightBlockerIntensity"))
+        {
+            groupUsed = true;
+        }
+
+        list.Add(new AttributeInfo
+        {
+            ElementInfo = new GpuWrapApiVertexPackingPackingElement
+            {
+                Type = GpuWrapApiVertexPackingePackingType.PT_Invalid,
+                Usage = GpuWrapApiVertexPackingePackingUsage.PS_Invalid,
+                UsageIndex = 0,
+                StreamType = GpuWrapApiVertexPackingEStreamType.ST_Invalid
+            }
+        });
+
+        return list;
     }
 }

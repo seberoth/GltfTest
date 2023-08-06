@@ -30,9 +30,11 @@ namespace GltfTest
         {
             Init(@"C:\Games\Steam\steamapps\common\Cyberpunk 2077\bin\x64\Cyberpunk2077.exe");
 
+            //Debug.Test(_archiveManager);
+
             if (Export)
             {
-                var cr2w = GetFile(@"base\characters\common\hair\hh_090_wa__alt\hh_090_wa__alt_player.mesh");
+                var cr2w = GetFile(@"base\characters\head\player_base_heads\player_female_average\h0_002_pwa_a__young_096\h0_002_pwa_a__young_096.mesh");
                 if (cr2w == null)
                 {
                     return;
@@ -94,70 +96,6 @@ namespace GltfTest
             return null;
         }
 
-        private static void Test()
-        {
-            var dict = new Dictionary<CName, string>();
-            foreach (var archive in _archiveManager.Archives.Items)
-            {
-                if (archive is not Archive ar)
-                {
-                    continue;
-                }
-
-                foreach (var gameFile in archive.Files.Values)
-                {
-                    if (gameFile is not FileEntry fileEntry)
-                    {
-                        continue;
-                    }
-
-                    if (fileEntry.Extension != ".mt")
-                    {
-                        continue;
-                    }
-
-                    using var ms = new MemoryStream();
-                    ar.ExtractFile(fileEntry, ms);
-                    ms.Position = 0;
-
-                    using var reader = new CR2WReader(ms);
-                    if (reader.ReadFile(out var cr2w) != EFileReadErrorCodes.NoError)
-                    {
-                        continue;
-                    }
-
-                    if (cr2w!.RootChunk is CMaterialTemplate materialTemplate)
-                    {
-                        var materialType = ((ERenderMaterialType)materialTemplate.MaterialType).ToString();
-
-                        foreach (var handle in materialTemplate.Parameters[2])
-                        {
-                            if (handle.Chunk is not { } parameter)
-                            {
-                                continue;
-                            }
-
-                            var typeName = parameter.GetType().Name;
-
-                            if (dict.TryGetValue(parameter.ParameterName, out var val))
-                            {
-                                if (val != typeName)
-                                {
-                                    throw new Exception();
-                                }
-                            }
-                            else
-                            {
-                                dict.Add(parameter.ParameterName, typeName);
-                            }
-                        }
-                    }
-                }
-
-                ar.ReleaseFileHandle();
-            }
-
-            File.WriteAllText(@"C:\Dev\Parameters.json", JsonSerializer.Serialize(dict));
-        }
+        
     }
 }
