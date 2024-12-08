@@ -1,16 +1,12 @@
-﻿using DynamicData;
-using WolvenKit.Common;
+﻿using WolvenKit.Common;
 using WolvenKit.RED4.Archive.CR2W;
-using WolvenKit.RED4.Archive.IO;
 using WolvenKit.RED4.Types;
-using EFileReadErrorCodes = WolvenKit.RED4.Archive.IO.EFileReadErrorCodes;
 
 namespace GltfTest;
 
 public class GameFileWrapper
 {
     protected readonly IArchiveManager _archiveManager;
-    private List<CName> _namesList = new();
 
     public string FileName { get; internal set; }
     public CR2WFile File { get; }
@@ -55,21 +51,11 @@ public class GameFileWrapper
             }
         }
 
-        foreach (var fileEntry in _archiveManager.GetFiles())
+        var cr2w = _archiveManager.GetCR2WFile(depotPath, false, false);
+        if (cr2w != null)
         {
-            if (fileEntry.Key == depotPath)
-            {
-                using var ms = new MemoryStream();
-                fileEntry.Extract(ms);
-                ms.Position = 0;
-
-                using var cr = new CR2WReader(ms);
-                if (cr.ReadFile(out var cr2w) == EFileReadErrorCodes.NoError)
-                {
-                    cr2w!.MetaData.FileName = depotPath.GetResolvedText()!;
-                    return new GameFileWrapper(cr2w, _archiveManager);
-                }
-            }
+            cr2w.MetaData.FileName = depotPath.GetResolvedText()!;
+            return new GameFileWrapper(cr2w, _archiveManager);
         }
 
         return null;

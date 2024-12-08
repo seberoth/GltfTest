@@ -1,5 +1,4 @@
 ﻿using System.Numerics;
-using static CommunityToolkit.Mvvm.ComponentModel.__Internals.__TaskExtensions.TaskAwaitableWithoutEndValidation;
 
 namespace GltfTest;
 

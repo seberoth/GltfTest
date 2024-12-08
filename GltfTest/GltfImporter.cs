@@ -1,16 +1,14 @@
-﻿using DynamicData.Tests;
-using GltfTest.Extras;
-using SharpDX.DXGI;
+﻿using GltfTest.Extras;
 using SharpGLTF.Schema2;
 using SharpGLTF.Validation;
 using System.Numerics;
-using SharpGLTF.IO;
+using System.Text.Json;
 using WolvenKit.RED4.Types;
 using static WolvenKit.RED4.Types.Enums;
 using Vector2 = System.Numerics.Vector2;
 using Vector3 = System.Numerics.Vector3;
 using Vector4 = System.Numerics.Vector4;
-using System.Runtime.Intrinsics;
+using System.Text.Json.Nodes;
 
 namespace GltfTest;
 
@@ -280,13 +278,13 @@ public class GltfImporter
             W = 1F
         });
 
-        if (!logicalNode.Extras.TryGetValue<float>(out var epsilon, "epsilon"))
+        if (!logicalNode.Extras.TryGetValue<float>(out var epsilon, "Epsilon"))
         {
             throw new Exception();
         }
         _mesh.BoneVertexEpsilons.Add(epsilon);
 
-        if (!logicalNode.Extras.TryGetValue<byte>(out var lod, "lod"))
+        if (!logicalNode.Extras.TryGetValue<byte>(out var lod, "Lod"))
         {
             throw new Exception();
         }
@@ -323,11 +321,11 @@ public class GltfImporter
         };
     }
 
-    private List<string>? GetTargetNames(JsonContent extras)
+    private List<string>? GetTargetNames(JsonNode extras)
     {
         try
         {
-            return extras.GetNode("targetNames").Deserialize<List<string>>();
+            return extras["targetNames"].Deserialize<List<string>>();
         }
         catch (Exception)
         {

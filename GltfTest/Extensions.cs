@@ -1,8 +1,6 @@
-﻿using System.Collections;
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
-using SharpDX.Direct3D11;
-using SharpGLTF.IO;
+using System.Text.Json.Nodes;
 
 namespace GltfTest;
 
@@ -48,17 +46,23 @@ internal static class Extensions
         return new Vector4(n, s > 0 ? 1 : -1);
     }
 
-    internal static bool TryGetValue<T>(this JsonContent content, [NotNullWhen(true)] out T? value, params IConvertible[] path) where T : IConvertible
+    internal static bool TryGetValue<T>(this JsonNode content, [NotNullWhen(true)] out T? value, string path) where T : IConvertible
     {
         try
         {
-            value = content.GetValue<T>(path);
-            return true;
+            var property = content[path];
+            if (property != null)
+            {
+                value = property.GetValue<T>();
+                return true;
+            }
         }
         catch (Exception)
         {
-            value = default;
-            return false;
+            // ignored
         }
+
+        value = default;
+        return false;
     }
 }

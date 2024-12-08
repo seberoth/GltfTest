@@ -3,8 +3,8 @@ using WolvenKit.RED4.Archive.CR2W;
 using WolvenKit.RED4.Types;
 using static WolvenKit.RED4.Types.Enums;
 using System.Numerics;
+using System.Text.Json;
 using GltfTest.Extras;
-using SharpGLTF.IO;
 using Vector2 = System.Numerics.Vector2;
 using Vector4 = System.Numerics.Vector4;
 using SharpGLTF.Memory;
@@ -61,7 +61,7 @@ public partial class GltfConverter
             // Maybe RotX?
             boneNode.WorldMatrix = RotY(YUp(inverseBoneRig));
 
-            boneNode.Extras = JsonContent.Serialize(new { Epsilon = (float)mesh.BoneVertexEpsilons[i], Lod = (byte)mesh.LodBoneMask[i] });
+            boneNode.Extras = JsonSerializer.SerializeToNode(new { Epsilon = (float)mesh.BoneVertexEpsilons[i], Lod = (byte)mesh.LodBoneMask[i] });
 
             bones.Add(boneNode);
         }
@@ -978,7 +978,7 @@ public partial class GltfConverter
 
         foreach (var (_, node) in result)
         {
-            node.Mesh.Extras = JsonContent.Serialize(new { targetNames = globalMorphTargets[node.Name].ToArray() });
+            node.Mesh.Extras = JsonSerializer.SerializeToNode(new { targetNames = globalMorphTargets[node.Name].ToArray() });
         }
 
         return result;

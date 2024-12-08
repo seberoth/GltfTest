@@ -195,11 +195,11 @@ public partial class GltfConverter
             }
 
             var cnt = 0;
-            foreach (var img in ModTools.GetRedImages(blob))
+            /*foreach (var img in ModTools.GetRedImages(blob))
             {
                 img.SaveToPNG(destFileName.FullName.Replace(".mlmask", $"_{cnt++}.png"));
                 img.Dispose();
-            }
+            }*/
         }
     }
 
