@@ -46,8 +46,14 @@ internal static class Extensions
         return new Vector4(n, s > 0 ? 1 : -1);
     }
 
-    internal static bool TryGetValue<T>(this JsonNode content, [NotNullWhen(true)] out T? value, string path) where T : IConvertible
+    internal static bool TryGetValue<T>(this JsonNode? content, [NotNullWhen(true)] out T? value, string path) where T : IConvertible
     {
+        if (content == null)
+        {
+            value = default;
+            return false;
+        }
+
         try
         {
             var property = content[path];

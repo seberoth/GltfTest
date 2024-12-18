@@ -165,7 +165,7 @@ public class GltfImporter
             X = (max.X + min.X) / 2,
             Y = (max.Y + min.Y) / 2,
             Z = (max.Z + min.Z) / 2,
-            W = 0
+            W = 1F
         };
         
         _blob.Header.QuantizationScale = new WolvenKit.RED4.Types.Vector4
@@ -226,6 +226,13 @@ public class GltfImporter
         }
 
         _blob.Header.VertexBufferSize = (CUInt32)vd.BaseStream.Position;
+
+        var padding = (-_blob.Header.VertexBufferSize)&1023;
+        if (padding > 0)
+        {
+            vd.Write(new byte[padding]);
+        }
+
         _blob.Header.IndexBufferOffset = (CUInt32)vd.BaseStream.Position;
 
         var index = 0;
@@ -278,17 +285,15 @@ public class GltfImporter
             W = 1F
         });
 
-        if (!logicalNode.Extras.TryGetValue<float>(out var epsilon, "Epsilon"))
+        if (logicalNode.Extras.TryGetValue<float>(out var epsilon, "Epsilon"))
         {
-            throw new Exception();
+            _mesh.BoneVertexEpsilons.Add(epsilon);
         }
-        _mesh.BoneVertexEpsilons.Add(epsilon);
-
-        if (!logicalNode.Extras.TryGetValue<byte>(out var lod, "Lod"))
+        
+        if (logicalNode.Extras.TryGetValue<byte>(out var lod, "Lod"))
         {
-            throw new Exception();
+            _mesh.LodBoneMask.Add(lod);
         }
-        _mesh.LodBoneMask.Add(lod);
     }
 
     private Matrix4x4 RotY(Matrix4x4 src)
@@ -403,7 +408,7 @@ public class GltfImporter
 
         for (int i = 0; i < 5; i++)
         {
-            var padding = vertexAttributeWriter.BaseStream.Position % 16;
+            var padding = (-vertexAttributeWriter.BaseStream.Position)&15;
             if (padding > 0)
             {
                 vertexAttributeWriter.Write(new byte[padding]);
@@ -443,6 +448,93 @@ public class GltfImporter
         #endregion VertexFactory
 
         _blob.Header.RenderChunkInfos.Add(renderChunkInfo);
+
+        if (targetNames != null && targetNames.Contains("GarmentSupport"))
+        {
+            var garmentSupport = (meshMeshParamGarmentSupport?)_mesh.Parameters.FirstOrDefault(x => x.Chunk is meshMeshParamGarmentSupport)?.Chunk;
+            if (garmentSupport == null)
+            {
+                garmentSupport = new meshMeshParamGarmentSupport
+                {
+                    CustomMorph = true
+                };
+                _mesh.Parameters.Add(garmentSupport);
+            }
+            garmentSupport.ChunkCapVertices.Add(new CArray<CUInt32>());
+
+            var garment = (garmentMeshParamGarment?)_mesh.Parameters.FirstOrDefault(x => x.Chunk is garmentMeshParamGarment)?.Chunk;
+            if (garment == null)
+            {
+                garment = new garmentMeshParamGarment();
+                _mesh.Parameters.Add(garment);
+            }
+
+            var garmentChunkData = new garmentMeshParamGarmentChunkData
+            {
+                NumVertices = (uint)vertexCount,
+                LodMask = 1,
+                IsTwoSided = false
+            };
+
+            var vertexBuffer = new MemoryStream();
+            var vertexWriter = new BinaryWriter(vertexBuffer);
+
+            foreach (var vec3 in primitive.VertexAccessors["POSITION"].AsVector3Array())
+            {
+                vertexWriter.Write(vec3.X);
+                vertexWriter.Write(-vec3.Z);
+                vertexWriter.Write(vec3.Y);
+            }
+            garmentChunkData.Vertices = new DataBuffer(vertexBuffer.ToArray());
+
+
+            var indicesBuffer = new MemoryStream();
+            var indicesWriter = new BinaryWriter(indicesBuffer);
+
+            var indices = primitive.GetIndices();
+            for (int j = 0; j < indices.Count; j += 3)
+            {
+                indicesWriter.Write((UInt16)indices[j + 2]);
+                indicesWriter.Write((UInt16)indices[j + 1]);
+                indicesWriter.Write((UInt16)indices[j + 0]);
+            }
+            garmentChunkData.Indices = new DataBuffer(indicesBuffer.ToArray());
+
+
+            var morphBuffer = new MemoryStream();
+            var morphWriter = new BinaryWriter(morphBuffer);
+
+            foreach (var vec3 in morphTargets["GarmentSupport"]["POSITION"].AsVector3Array())
+            {
+                morphWriter.Write(vec3.X);
+                morphWriter.Write(-vec3.Z);
+                morphWriter.Write(vec3.Y);
+            }
+            garmentChunkData.MorphOffsets = new DataBuffer(morphBuffer.ToArray());
+
+
+            var flagsBuffer = new MemoryStream();
+            var flagsWriter = new BinaryWriter(flagsBuffer);
+
+            for (int i = 0; i < vertexCount; i++)
+            {
+                flagsWriter.Write((int)0);
+            }
+            garmentChunkData.GarmentFlags = new DataBuffer(flagsBuffer.ToArray());
+
+
+            var uvBuffer = new MemoryStream();
+            var uvWriter = new BinaryWriter(uvBuffer);
+
+            foreach (var vec3 in primitive.VertexAccessors["TEXCOORD_0"].AsVector2Array())
+            {
+                uvWriter.Write(vec3.X);
+                uvWriter.Write(vec3.Y);
+            }
+            garmentChunkData.Uv = new DataBuffer(uvBuffer.ToArray());
+
+            garment.Chunks.Add(garmentChunkData);
+        }
 
         return renderChunkInfo;
     }
@@ -650,6 +742,12 @@ public class GltfImporter
                     throw new Exception();
                 case GpuWrapApiVertexPackingePackingType.PT_Color:
                 {
+                    if (DataArray[index] is Vector3 vector3)
+                    {
+                        writer.WriteColor(vector3);
+                        return;
+                    }
+                    
                     if (DataArray[index] is Vector4 vector4)
                     {
                         writer.WriteColor(vector4);
@@ -984,9 +1082,14 @@ public class GltfImporter
                     StreamIndex = 0,
                     StreamType = GpuWrapApiVertexPackingEStreamType.ST_PerVertex
                 },
-                DataArray = morphTargets["GarmentSupport"]["POSITION"].AsVector3Array().Cast<object>().ToList(),
+                DataArray = new List<object>(),
                 TargetSize = 8
             });
+
+            foreach (var vector in morphTargets["GarmentSupport"]["POSITION"].AsVector3Array())
+            {
+                list[^1].DataArray.Add(new Vector3(vector.X, -vector.Z, vector.Y));
+            }
 
             groupUsed = true;
         }

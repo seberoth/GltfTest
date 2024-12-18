@@ -360,6 +360,13 @@ public partial class GltfConverter
                     var x3 = Convert.ToSingle(u32 & 0x3ff);
                     var y3 = Convert.ToSingle((u32 >> 10) & 0x3ff);
                     var z3 = Convert.ToSingle((u32 >> 20) & 0x3ff);
+                    var w3 = (u32 >> 30) switch
+                    {
+                        0 => 1f,
+                        3 => -1f,
+                        _ => 0f // just for normals, doesn't matter there
+                    };
+
                     var dequant = 1f / 1023f;
 
                     Vertices.Add(new Vector4
@@ -367,7 +374,7 @@ public partial class GltfConverter
                         X = (x3 * 2 * dequant) - 1f,
                         Y = (y3 * 2 * dequant) - 1f,
                         Z = (z3 * 2 * dequant) - 1f,
-                        W = 1F
+                        W = w3
                     });
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Color:
