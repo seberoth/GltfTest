@@ -36,6 +36,7 @@ public class GltfImporter
             }
         }
 
+        _mesh.LocalMaterialBuffer.Materials = new CArray<IMaterial>();
         for (ushort i = 0; i < _modelRoot.LogicalMaterials.Count; i++)
         {
             _mesh.MaterialEntries.Add(new CMeshMaterialEntry
@@ -48,11 +49,6 @@ public class GltfImporter
             var materialInstance = _modelRoot.LogicalMaterials[i].GetExtension<MaterialInstance>();
             if (materialInstance != null)
             {
-                if (_mesh.LocalMaterialBuffer.Materials == null)
-                {
-                    _mesh.LocalMaterialBuffer.Materials = new CArray<IMaterial>();
-                }
-
                 var mi = new CMaterialInstance();
                 mi.BaseMaterial = new CResourceReference<IMaterial>(materialInstance.Template);
 

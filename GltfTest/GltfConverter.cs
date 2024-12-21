@@ -1,14 +1,15 @@
 ﻿using SharpGLTF.Schema2;
 using WolvenKit.RED4.Archive.CR2W;
 using WolvenKit.RED4.Types;
-using static WolvenKit.RED4.Types.Enums;
 using System.Numerics;
 using System.Text.Json;
 using GltfTest.Extras;
-using Vector2 = System.Numerics.Vector2;
-using Vector4 = System.Numerics.Vector4;
 using SharpGLTF.Memory;
 using WolvenKit.Common;
+using static WolvenKit.RED4.Types.Enums;
+using Vector2 = System.Numerics.Vector2;
+using Vector3 = System.Numerics.Vector3;
+using Vector4 = System.Numerics.Vector4;
 
 namespace GltfTest;
 
@@ -332,108 +333,44 @@ public partial class GltfConverter
             }
         }
 
-        public readonly List<object> Vertices = new();
+        public readonly List<Vector4> Vertices = new();
 
-        public void Read(BinaryReader reader)
+        public void Read(VertexAttributeReader reader)
         {
             switch ((GpuWrapApiVertexPackingePackingType)_element.Type)
             {
                 case GpuWrapApiVertexPackingePackingType.PT_Short4N:
-                    Vertices.Add(new Vector4
-                    {
-                        X = reader.ReadInt16(),
-                        Y = reader.ReadInt16(),
-                        Z = reader.ReadInt16(),
-                        W = reader.ReadInt16()
-                    });
+                    Vertices.Add(reader.ReadShortN4());
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Float16_2:
-                    Vertices.Add(new Vector2
-                    {
-                        X = (float)reader.ReadHalf(),
-                        Y = (float)reader.ReadHalf()
-                    });
+                    Vertices.Add(reader.ReadHalf2());
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Dec4:
-                    var u32 = reader.ReadUInt32();
-
-                    var x3 = Convert.ToSingle(u32 & 0x3ff);
-                    var y3 = Convert.ToSingle((u32 >> 10) & 0x3ff);
-                    var z3 = Convert.ToSingle((u32 >> 20) & 0x3ff);
-                    var w3 = (u32 >> 30) switch
-                    {
-                        0 => 1f,
-                        3 => -1f,
-                        _ => 0f // just for normals, doesn't matter there
-                    };
-
-                    var dequant = 1f / 1023f;
-
-                    Vertices.Add(new Vector4
-                    {
-                        X = (x3 * 2 * dequant) - 1f,
-                        Y = (y3 * 2 * dequant) - 1f,
-                        Z = (z3 * 2 * dequant) - 1f,
-                        W = w3
-                    });
+                    Vertices.Add(reader.ReadWKitDec4());
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Color:
-                    Vertices.Add(new Vector4
-                    {
-                        X = reader.ReadByte(),
-                        Y = reader.ReadByte(),
-                        Z = reader.ReadByte(),
-                        W = reader.ReadByte()
-                    });
+                    Vertices.Add(reader.ReadColor());
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Float4:
-                    Vertices.Add(new Vector4
-                    {
-                        X = reader.ReadSingle(),
-                        Y = reader.ReadSingle(),
-                        Z = reader.ReadSingle(),
-                        W = reader.ReadSingle()
-                    });
+                    Vertices.Add(reader.ReadFloat4());
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_UByte4:
-                    Vertices.Add(new Vector4
-                    {
-                        X = reader.ReadByte(),
-                        Y = reader.ReadByte(),
-                        Z = reader.ReadByte(),
-                        W = reader.ReadByte()
-                    });
+                    Vertices.Add(reader.ReadUByte4());
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_UByte4N:
-                    Vertices.Add(new Vector4
-                    {
-                        X = reader.ReadByte(),
-                        Y = reader.ReadByte(),
-                        Z = reader.ReadByte(),
-                        W = reader.ReadByte()
-                    });
+                    Vertices.Add(reader.ReadUByteN4());
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_UShort2:
-                    Vertices.Add(new Vector2
-                    {
-                        X = reader.ReadInt16(),
-                        Y = reader.ReadInt16()
-                    });
+                    Vertices.Add(reader.ReadUShort2());
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Float1:
-                    Vertices.Add(reader.ReadSingle());
+                    Vertices.Add(reader.ReadFloat());
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
-                    Vertices.Add(new Vector4
-                    {
-                        X = (float)reader.ReadHalf(),
-                        Y = (float)reader.ReadHalf(),
-                        Z = (float)reader.ReadHalf(),
-                        W = (float)reader.ReadHalf(),
-                    });
+                    Vertices.Add(reader.ReadHalf4());
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_UInt1:
-                    Vertices.Add(reader.ReadUInt32());
+                    Vertices.Add(reader.ReadUInt());
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Invalid:
                 case GpuWrapApiVertexPackingePackingType.PT_Float2:
@@ -462,6 +399,11 @@ public partial class GltfConverter
             }
         }
 
+        private Vector4 YUp(Vector4 src)
+        {
+            return src with { Y = src.Z, Z = -src.Y };
+        }
+
         public void Write(WolvenKit.RED4.Types.Vector4 quantizationScale, WolvenKit.RED4.Types.Vector4 quantizationOffset)
         {
             switch ((GpuWrapApiVertexPackingePackingType)_element.Type)
@@ -471,22 +413,20 @@ public partial class GltfConverter
                     {
                         if (DstFormat.Encoding == EncodingType.FLOAT)
                         {
-                            var x = vertex.X / short.MaxValue;
-                            var y = vertex.Y / short.MaxValue;
-                            var z = vertex.Z / short.MaxValue;
+                            var v = vertex;
 
                             if (AttributeKey == "POSITION")
                             {
-                                x = x * quantizationScale.X + quantizationOffset.X;
-                                y = y * quantizationScale.Y + quantizationOffset.Y;
-                                z = z * quantizationScale.Z + quantizationOffset.Z;
+                                v = DirectXMeshHelper.MultiplyAdd(v, quantizationScale, quantizationOffset);
                             }
+
+                            v = YUp(v);
 
                             if (DstFormat.Dimensions == DimensionType.VEC3)
                             {
-                                _writer.Write(x);
-                                _writer.Write(z);
-                                _writer.Write(-y);
+                                _writer.Write(v.X);
+                                _writer.Write(v.Y);
+                                _writer.Write(v.Z);
                             }
                             else
                             {
@@ -500,7 +440,7 @@ public partial class GltfConverter
                     }
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Float16_2:
-                    foreach (Vector2 vertex in Vertices)
+                    foreach (Vector4 vertex in Vertices)
                     {
                         if (DstFormat.Encoding == EncodingType.FLOAT)
                         {
@@ -525,18 +465,20 @@ public partial class GltfConverter
                     {
                         if (DstFormat.Encoding == EncodingType.FLOAT)
                         {
+                            var v = YUp(vertex);
+
                             if (DstFormat.Dimensions == DimensionType.VEC3)
                             {
-                                _writer.Write(vertex.X);
-                                _writer.Write(vertex.Z);
-                                _writer.Write(-vertex.Y);
+                                _writer.Write(v.X);
+                                _writer.Write(v.Y);
+                                _writer.Write(v.Z);
                             }
                             else if (DstFormat.Dimensions == DimensionType.VEC4)
                             {
-                                _writer.Write(vertex.X);
-                                _writer.Write(vertex.Z);
-                                _writer.Write(-vertex.Y);
-                                _writer.Write(vertex.W);
+                                _writer.Write(v.X);
+                                _writer.Write(v.Y);
+                                _writer.Write(v.Z);
+                                _writer.Write(v.W);
 
                                 if (!vertex.IsValidTangent())
                                 {
@@ -584,21 +526,19 @@ public partial class GltfConverter
                         {
                             if (DstFormat.Dimensions == DimensionType.VEC3)
                             {
-                                var x = vertex.X / short.MaxValue;
-                                var y = vertex.Y / short.MaxValue;
-                                var z = vertex.Z / short.MaxValue;
+                                var v = vertex / short.MaxValue;
 
                                 // Debug
                                 if (ElementType == ElementType.VehicleDamage && AttributeKey == "POSITION")
                                 {
-                                    x *= 100F;
-                                    y *= 100F;
-                                    z *= 100F;
+                                    v = v * 100f;
                                 }
 
-                                _writer.Write(x);
-                                _writer.Write(z);
-                                _writer.Write(-y);
+                                v = YUp(v);
+
+                                _writer.Write(v.X);
+                                _writer.Write(v.Y);
+                                _writer.Write(v.Z);
                             }
                             else
                             {
@@ -641,10 +581,10 @@ public partial class GltfConverter
                         {
                             if (DstFormat.Dimensions == DimensionType.VEC4)
                             {
-                                _writer.Write(vertex.X / byte.MaxValue);
-                                _writer.Write(vertex.Y / byte.MaxValue);
-                                _writer.Write(vertex.Z / byte.MaxValue);
-                                _writer.Write(vertex.W / byte.MaxValue);
+                                _writer.Write(vertex.X);
+                                _writer.Write(vertex.Y);
+                                _writer.Write(vertex.Z);
+                                _writer.Write(vertex.W);
                             }
                             else
                             {
@@ -658,7 +598,7 @@ public partial class GltfConverter
                     }
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_UShort2:
-                    foreach (Vector2 vertex in Vertices)
+                    foreach (Vector4 vertex in Vertices)
                     {
                         if (DstFormat.Encoding == EncodingType.UNSIGNED_SHORT)
                         {
@@ -679,13 +619,13 @@ public partial class GltfConverter
                     }
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_Float1:
-                    foreach (float vertex in Vertices)
+                    foreach (Vector4 vertex in Vertices)
                     {
                         if (DstFormat.Encoding == EncodingType.FLOAT)
                         {
                             if (DstFormat.Dimensions == DimensionType.SCALAR)
                             {
-                                _writer.Write(vertex);
+                                _writer.Write(vertex.X);
                             }
                             else
                             {
@@ -701,20 +641,22 @@ public partial class GltfConverter
                 case GpuWrapApiVertexPackingePackingType.PT_Float16_4:
                     foreach (Vector4 vertex in Vertices)
                     {
+                        var v = YUp(vertex);
+
                         if (DstFormat.Encoding == EncodingType.FLOAT)
                         {
                             if (DstFormat.Dimensions == DimensionType.VEC3)
                             {
-                                _writer.Write(vertex.X);
-                                _writer.Write(vertex.Z);
-                                _writer.Write(-vertex.Y);
+                                _writer.Write(v.X);
+                                _writer.Write(v.Y);
+                                _writer.Write(v.Z);
                             }
                             else if (DstFormat.Dimensions == DimensionType.VEC4)
                             {
-                                _writer.Write(vertex.X);
-                                _writer.Write(vertex.Z);
-                                _writer.Write(-vertex.Y);
-                                _writer.Write(vertex.W);
+                                _writer.Write(v.X);
+                                _writer.Write(v.Y);
+                                _writer.Write(v.Z);
+                                _writer.Write(v.W);
                             }
                             else
                             {
@@ -728,13 +670,13 @@ public partial class GltfConverter
                     }
                     break;
                 case GpuWrapApiVertexPackingePackingType.PT_UInt1:
-                    foreach (uint vertex in Vertices)
+                    foreach (Vector4 vertex in Vertices)
                     {
                         if (DstFormat.Encoding == EncodingType.UNSIGNED_INT)
                         {
                             if (DstFormat.Dimensions == DimensionType.SCALAR)
                             {
-                                _writer.Write(vertex);
+                                _writer.Write((uint)vertex.X);
                             }
                             else
                             {
@@ -780,7 +722,7 @@ public partial class GltfConverter
     private Dictionary<byte, Node> ExtractMeshes(rendRenderMeshBlob rendMeshBlob, List<VariantsRootEntry> variants, Dictionary<string, Material> materials)
     {
         var ms = new MemoryStream(rendMeshBlob.RenderBuffer.Buffer.GetBytes());
-        var bufferReader = new BinaryReader(ms);
+        var bufferReader = new VertexAttributeReader(ms);
 
         var globalMorphTargets = new Dictionary<string, List<string>>();
 
@@ -893,7 +835,7 @@ public partial class GltfConverter
                     }
                 }
 
-                DoChecks(elementInfos);
+                TransformData(elementInfos);
 
                 var garmentDict = new Dictionary<string, Accessor>();
                 var vehicleDict = new Dictionary<string, Accessor>();
@@ -991,18 +933,15 @@ public partial class GltfConverter
         return result;
     }
 
-    private void DoChecks(List<VertexElement> elementInfos)
+    private void TransformData(List<VertexElement> elementInfos)
     {
         var normals = elementInfos.FirstOrDefault(x => x.AttributeKey == "NORMAL");
         if (normals != null)
         {
             for (int i = 0; i < normals.Vertices.Count; i++)
             {
-                var normal = (Vector4)normals.Vertices[i];
-                if (!normal.IsValidTangent())
-                {
-                    normals.Vertices[i] = normal.SanitizeTangent();
-                }
+                var v = normals.Vertices[i];
+                normals.Vertices[i] = new Vector4(v.X / 511f, v.Y / 511f, v.Z / 511f, -1f);
             }
         }
 
@@ -1011,11 +950,29 @@ public partial class GltfConverter
         {
             for (int i = 0; i < tangents.Vertices.Count; i++)
             {
-                var tangent = (Vector4)tangents.Vertices[i];
-                if (!tangent.IsValidTangent())
+                var v = tangents.Vertices[i];
+
+                v = new Vector4(v.X / 511f, v.Y / 511f, v.Z / 511f, v.W);
+                switch (v.W)
                 {
-                    tangents.Vertices[i] = tangent.SanitizeTangent();
+                    case 1:
+                        v.W = -1f;
+                        break;
+
+                    case 2:
+                        v.W = 1f;
+                        break;
+
+                    default:
+                        throw new NotSupportedException();
                 }
+
+                if (!v.IsValidTangent())
+                {
+                    v = v.SanitizeTangent();
+                }
+
+                tangents.Vertices[i] = v;
             }
         }
 
@@ -1026,13 +983,14 @@ public partial class GltfConverter
         {
             for (int j = 0; j < weights0.Vertices.Count; j++)
             {
-                var vertex0 = (Vector4)weights0.Vertices[j];
-                var vertex1 = (Vector4)weights1.Vertices[j];
+                var vertex0 = weights0.Vertices[j];
+                var vertex1 = weights1.Vertices[j];
 
                 var sum = vertex0.X + vertex0.Y + vertex0.Z + vertex0.W + vertex1.X + vertex1.Y + vertex1.Z + vertex1.W;
-                if (sum != 255)
+                if (sum != 1F)
                 {
-                    weights0.Vertices[j] = vertex0 with { X = vertex0.X + (byte)(255 - sum) };
+                    weights0.Vertices[j] = vertex0 / sum;
+                    weights1.Vertices[j] = vertex1 / sum;
                 }
             }
         }
@@ -1040,24 +998,12 @@ public partial class GltfConverter
         {
             for (int j = 0; j < weights0.Vertices.Count; j++)
             {
-                var vertex0 = (Vector4)weights0.Vertices[j];
+                var vertex0 = weights0.Vertices[j];
 
                 var sum = vertex0.X + vertex0.Y + vertex0.Z + vertex0.W;
-                if (sum != 255)
+                if (sum != 1F)
                 {
-                    weights0.Vertices[j] = vertex0 with { X = vertex0.X + (byte)(255 - sum) };
-                }
-            }
-        }
-
-        var texcoord1 = elementInfos.FirstOrDefault(x => x.AttributeKey == "TEXCOORD_1");
-        if (texcoord1 != null)
-        {
-            foreach (Vector2 vertex in texcoord1.Vertices)
-            {
-                if (vertex.X != 0 || vertex.Y != 0)
-                {
-
+                    weights0.Vertices[j] = vertex0 / sum;
                 }
             }
         }
