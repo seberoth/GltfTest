@@ -813,20 +813,17 @@ public partial class GltfConverter
                     throw new Exception();
                 }
 
+                var padding = (-bufferReader.BaseStream.Position) & 15;
+                if (padding > 0)
+                {
+                    bufferReader.BaseStream.Position += padding;
+                }
+
                 for (var j = 0; j < renderChunkInfo.NumVertices; j++)
                 {
-                    var nextOffset = offset + totalSize * j;
-                    if (bufferReader.BaseStream.Position != nextOffset)
+                    if (bufferReader.BaseStream.Position != offset + totalSize * j)
                     {
-                        if (nextOffset > bufferReader.BaseStream.Position)
-                        {
-                            var diff = nextOffset - bufferReader.BaseStream.Position;
-                            var tmp = bufferReader.ReadBytes((int)diff); // always 0, padding?
-                        }
-                        else
-                        {
-                            bufferReader.BaseStream.Position = nextOffset;
-                        }
+                        throw new Exception();
                     }
 
                     foreach (var elementInfo in elementInfos)

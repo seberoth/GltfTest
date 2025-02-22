@@ -1,4 +1,4 @@
-﻿using Microsoft.Build.Framework;
+﻿using WolvenKit.Common;
 using WolvenKit.Core.Interfaces;
 
 namespace GltfTest;
